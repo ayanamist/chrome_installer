@@ -158,6 +158,15 @@ class SourceTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_links_to_the_actual_official_source_and_deduplicates_rows(self):
+        item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x86',
+                    source={'url': 'https://dl.google.com/release2/chrome/version/payload.crx3'})
+        _, body = publish.release_text(item['version'], [item, item])
+        self.assertIn('[Google original](https://dl.google.com/release2/chrome/version/payload.crx3)', body)
+        self.assertEqual(body.count('| Stable | Windows | X86 |'), 1)
+        with self.assertRaises(ValueError):
+            publish.release_text(item['version'], [dict(item, source={'url': 'https://evil.example/download'})])
+
     def test_release_accepts_windows_x86_and_lists_its_architecture(self):
         item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x86')
         publish.validate_manifest(item, item['version'])

@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from chrome_archive import CHANNELS, VERSION, get_release, gh, sha256, validate_target
+from chrome_archive import CHANNELS, VERSION, get_release, gh, google_https, sha256, validate_target
 
 
 def validate_manifest(value, version):
@@ -22,14 +22,17 @@ def validate_manifest(value, version):
 
 
 def release_text(version, manifests):
-    rows = sorted({(item['channel'], item['platform'], item['architecture']) for item in manifests})
+    entries = {(item['channel'], item['platform'], item['architecture']): item for item in manifests}
+    rows = sorted(entries)
     channels = [CHANNELS[channel] for channel in CHANNELS if any(row[0] == channel for row in rows)]
     title = version + ' · ' + ' / '.join(channels)
     body = f'# Chrome {version}\n\n'
     body += 'Official Google download payloads, archived without executing an installer.\n\n'
-    body += '| Channel | Platform | Architecture |\n|---|---|---|\n'
+    body += '| Channel | Platform | Architecture | Official original download |\n|---|---|---|---|\n'
     for channel, platform, arch in rows:
-        body += f'| {CHANNELS[channel]} | {dict(windows="Windows", macos="macOS", linux="Linux")[platform]} | {arch.upper()} |\n'
+        url = entries[(channel, platform, arch)].get('source', {}).get('url')
+        link = f'[Google original]({google_https(url)})' if url else '—'
+        body += f'| {CHANNELS[channel]} | {dict(windows="Windows", macos="macOS", linux="Linux")[platform]} | {arch.upper()} | {link} |\n'
     body += '\n## Assets\n\n'
     body += '- `*-browser.7z`: extracted Windows browser files.\n'
     body += '- `*-browser.tar.xz`: extracted macOS/Linux files, preserving Unix modes and symbolic links.\n'
