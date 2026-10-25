@@ -1,17 +1,17 @@
 # 协议及归档约定
 
-范围：Chrome 官方 Windows／macOS／Linux 原始 payload 的每日版本归档，覆盖 x64／ARM64。日期：2026-10-25。请求协议：Omaha JSON 3.1；实现依据：Chromium `157.0.8089.0` 源码。该文档记录当前约定，版本号不作为固定下载目标。
+范围：Chrome 官方 Windows／macOS／Linux 原始 payload 的每日版本归档，Windows 覆盖 x86（32 位）／x64／ARM64，macOS 和 Linux 覆盖 x64／ARM64，共 12 个有效通道组合。日期：2026-10-25。请求协议：Omaha JSON 3.1；实现依据：Chromium `157.0.8089.0` 源码。该文档记录当前约定，版本号不作为固定下载目标。
 
 ## Windows 和 macOS
 
 向 `https://update.googleapis.com/service/update2/json` 发送下载清单请求，`version=0.0.0.0` 用于获取完整安装 payload；显式传入 `release_channel=stable` 或 `extended`。这是独立的下载请求，不读取本机注册 token、设备标识或企业策略，也不注册 updater。
 
-- Windows app ID：`{8A69D345-D564-463C-AFF1-A69D9E530F96}`，AP 指定 `-arch_x64`／`-arch_arm64`。
+- Windows app ID：`{8A69D345-D564-463C-AFF1-A69D9E530F96}`，AP 指定 `-arch_x86`／`-arch_x64`／`-arch_arm64`。
 - macOS app ID：`com.google.Chrome`，请求的 OS／arch 对应目标架构。
 - 请求 `acceptformat=crx3`，禁用对增量格式的依赖，获取可独立检查的完整包。
 - 只使用 Google HTTPS 地址及 Google HTTPS 重定向。
 - 按服务器清单核对包大小和 SHA-256，检查 CRX3 头部及 ZIP 路径。
-- Windows 从 CRX3 提取清单指定的完整 EXE，使用 Linux 7-Zip 读取 PE 产品版本；使用 7-Zip 解出嵌入的 `Chrome-bin`，检查对应版本的 chrome.dll 及 chrome.exe 的 PE 架构。
+- Windows 从 CRX3 提取清单指定的完整 EXE，使用 Linux 7-Zip 读取 PE 产品版本；使用 7-Zip 解出嵌入的 `Chrome-bin`，检查对应版本的 chrome.dll 及 chrome.exe 的 PE 架构。x86 的 PE Machine 必须为 `0x014c`，x64 为 `0x8664`，ARM64 为 `0xaa64`。
 - macOS 保留 CRX3 原包，按 ZIP 文件模式恢复 `.app`，先写普通文件，再恢复检查过的符号链接；使用 tar.xz 保留权限和符号链接，验证 Info.plist 版本和 Mach-O 支持的架构。全流程在 Linux runner 执行，不调用原生 macOS 命令。
 - 服务器返回的安装命令参数仅作为证据记录，永不执行。
 
@@ -48,10 +48,10 @@ Tag 始终为官方响应的四段 Chrome 版本号，不包含通道、平台�
 
 ```bash
 python -m unittest discover -s tests -v
-python scripts/chrome_archive.py --platform windows --arch arm64 --query-only
+python scripts/chrome_archive.py --platform windows --arch x86 --query-only
 python scripts/chrome_archive.py --platform macos --arch x64 --query-only
 python scripts/chrome_archive.py --platform linux --arch arm64 --query-only
 python scripts/publish_releases.py --input dist --repository OWNER/REPO --preview
 ```
 
-Actions 的时间和默认分支语义依据 [GitHub schedule 文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)，版本 tag 与发布过程依据 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。7-Zip 固定在 26.05，下载官方 portable 版本并核对 GitHub Release asset SHA-256；六个归档组合及发布任务统一使用 Ubuntu 24.04 runner。
+Actions 的时间和默认分支语义依据 [GitHub schedule 文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)，版本 tag 与发布过程依据 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。7-Zip 固定在 26.05，下载官方 portable 版本并核对 GitHub Release asset SHA-256；七个平台／架构归档组合及发布任务统一使用 Ubuntu 24.04 runner。

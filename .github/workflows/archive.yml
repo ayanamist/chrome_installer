@@ -30,6 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - {platform: windows, arch: x86}
           - {platform: windows, arch: x64}
           - {platform: windows, arch: arm64}
           - {platform: macos, arch: x64}

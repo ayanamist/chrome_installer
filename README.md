@@ -6,17 +6,17 @@
 
 | 平台 | 架构 | Stable | Extended Stable | 原始文件 |
 |---|---|---|---|---|
-| Windows | x64、ARM64 | ✓ | ✓ | updater CRX3 内的完整安装 EXE |
+| Windows | x86（32 位）、x64、ARM64 | ✓ | ✓ | updater CRX3 内的完整安装 EXE |
 | macOS | x64、ARM64 | ✓ | ✓ | updater 的原始 CRX3 |
 | Linux | x64、ARM64 | ✓ | 官方不提供 | 官方 APT 仓库的 `.deb` |
 
-共 10 个平台／架构／通道组合。版本取自各平台、各架构实际的官方响应，可能因发布进度或灰度不同而不一致。Linux 仅归档 DEB；暂不额外归档 RPM。
+共 12 个平台／架构／通道组合。版本取自各平台、各架构实际的官方响应，可能因发布进度或灰度不同而不一致。Linux 仅归档 DEB；暂不额外归档 RPM。
 
 ## 自动执行
 
 `.github/workflows/archive.yml` 在每天 **04:31（Asia/Singapore，UTC+8）**执行，也支持 Actions 页手动执行。`main` 上脚本、测试或 workflow 的变更会触发执行；Pull Request 只跑测试。
 
-六个归档组合统一使用 Ubuntu 24.04 runner，测试作为各归档任务内的一个步骤执行。所有文件均按 Google 官方清单核对大小和 SHA-256；Windows 从 PE 元数据检查版本，macOS 检查 Info.plist 版本。所有平台都会检查实际可执行文件的架构、验证重新封装的归档：Windows 执行 `7z t`，macOS／Linux 逐文件比对 tar.xz 解压内容的 SHA-256 和符号链接。
+七个平台／架构归档组合统一使用 Ubuntu 24.04 runner，测试作为各归档任务内的一个步骤执行。所有文件均按 Google 官方清单核对大小和 SHA-256；Windows 从 PE 元数据检查版本，macOS 检查 Info.plist 版本。所有平台都会检查实际可执行文件的架构、验证重新封装的归档：Windows 执行 `7z t`，macOS／Linux 逐文件比对 tar.xz 解压内容的 SHA-256 和符号链接。
 
 不需要 Chrome Enterprise token 或个人 PAT。发布任务使用仓库自带的 `GITHUB_TOKEN`，只有发布任务申请 `contents: write`。原始 payload 只保存在 Release 附件中，不提交到 Git。
 
@@ -52,7 +52,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 只查看 Google 返回的版本和下载地址：
 
 ```bash
-python scripts/chrome_archive.py --platform windows --arch x64 --query-only
+python scripts/chrome_archive.py --platform windows --arch x86 --query-only
 python scripts/chrome_archive.py --platform macos --arch arm64 --query-only
 python scripts/chrome_archive.py --platform linux --arch arm64 --query-only
 ```
@@ -70,6 +70,8 @@ Linux / WSL 上归档 Windows：
 python scripts/chrome_archive.py --platform windows --arch x64 \
   --seven-zip 7zz
 ```
+
+Windows 支持 `--arch x86`（32 位）、`x64`、`arm64`；macOS 和 Linux 支持 `x64`、`arm64`。
 
 `--channel stable`／`--channel extended` 可单独选择通道。Linux 不接受 `extended`。`--repository OWNER/REPO` 可查询现有 Release，跳过已归档的组合；此参数只进行读取，不发布文件。
 

@@ -24,7 +24,14 @@ ENDPOINT = 'https://update.googleapis.com/service/update2/json'
 DEB_ROOT = 'https://dl.google.com/linux/chrome/deb/'
 UPDATER_VERSION = '157.0.8089.0'
 CHANNELS = {'stable': 'Stable', 'extended': 'Extended Stable'}
+ARCHITECTURES = {'windows': ('x86', 'x64', 'arm64'),
+                 'macos': ('x64', 'arm64'), 'linux': ('x64', 'arm64')}
 VERSION = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
+
+
+def validate_target(platform, arch):
+    if platform not in ARCHITECTURES or arch not in ARCHITECTURES[platform]:
+        raise ValueError(f'Unsupported target: {platform}/{arch}')
 
 
 def write_json(path, value):
@@ -88,6 +95,7 @@ class Offer:
     arguments: str = ''
 
     def __post_init__(self):
+        validate_target(self.platform, self.arch)
         if not VERSION.fullmatch(self.version) or self.channel not in CHANNELS:
             raise ValueError('Invalid version/channel')
         safe_name(self.package_name)
@@ -117,7 +125,8 @@ class Offer:
 
 
 def query_omaha(platform, arch, channel):
-    if platform not in ('windows', 'macos') or arch not in ('x64', 'arm64') or channel not in CHANNELS:
+    validate_target(platform, arch)
+    if platform not in ('windows', 'macos') or channel not in CHANNELS:
         raise ValueError('Unsupported Omaha target')
     os_name = 'win' if platform == 'windows' else 'mac'
     app_id = '{8A69D345-D564-463C-AFF1-A69D9E530F96}' if platform == 'windows' else 'com.google.Chrome'
@@ -155,6 +164,7 @@ def query_omaha(platform, arch, channel):
 
 
 def parse_deb_index(text, arch):
+    validate_target('linux', arch)
     deb_arch = {'x64': 'amd64', 'arm64': 'arm64'}[arch]
     candidates = []
     for paragraph in text.split('\n\n'):
@@ -174,6 +184,7 @@ def parse_deb_index(text, arch):
 
 
 def query_linux(arch):
+    validate_target('linux', arch)
     deb_arch = {'x64': 'amd64', 'arm64': 'arm64'}[arch]
     with OPENER.open(DEB_ROOT + f'dists/stable/main/binary-{deb_arch}/Packages.gz', timeout=60) as response:
         data = gzip.decompress(response.read(8 * 1024**2)).decode()
@@ -321,6 +332,7 @@ def verify_pe_version(path, version, command):
 
 
 def validate_binary_arch(path, platform, arch):
+    validate_target(platform, arch)
     with path.open('rb') as stream:
         header = stream.read(4096)
     if platform == 'windows':
@@ -330,7 +342,7 @@ def validate_binary_arch(path, platform, arch):
         with path.open('rb') as stream:
             stream.seek(offset)
             pe = stream.read(6)
-        if pe[:4] != b'PE\0\0' or struct.unpack_from('<H', pe, 4)[0] != {'x64': 0x8664, 'arm64': 0xaa64}[arch]:
+        if pe[:4] != b'PE\0\0' or struct.unpack_from('<H', pe, 4)[0] != {'x86': 0x014c, 'x64': 0x8664, 'arm64': 0xaa64}[arch]:
             raise ValueError(f'PE architecture does not match {arch}')
     elif platform == 'linux':
         if header[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', header, 18)[0] != {'x64': 62, 'arm64': 183}[arch]:
@@ -448,7 +460,7 @@ def build(offer, package, output, command):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--platform', choices=['windows', 'macos', 'linux'], required=True)
-    parser.add_argument('--arch', choices=['x64', 'arm64'], required=True)
+    parser.add_argument('--arch', choices=['x86', 'x64', 'arm64'], required=True)
     parser.add_argument('--channel', choices=['stable', 'extended', 'all'], default='all')
     parser.add_argument('--output', type=Path, default=Path('dist'))
     parser.add_argument('--cache', type=Path, default=Path('.cache/packages'))
@@ -456,6 +468,10 @@ def main():
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'))
     parser.add_argument('--query-only', action='store_true')
     args = parser.parse_args()
+    try:
+        validate_target(args.platform, args.arch)
+    except ValueError as error:
+        parser.error(str(error))
     if args.platform == 'linux' and args.channel == 'extended':
         parser.error('Google does not offer Extended Stable for Linux')
     if not args.query_only and not shutil.which(args.seven_zip):

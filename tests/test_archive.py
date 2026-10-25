@@ -23,6 +23,43 @@ def offer(**changes):
 
 
 class SourceTests(unittest.TestCase):
+    def test_x86_requests_select_both_windows_channels(self):
+        import io
+        for channel in ('stable', 'extended'):
+            response = {'response': {'app': [{'appid': '{8A69D345-D564-463C-AFF1-A69D9E530F96}',
+                'status': 'ok', 'updatecheck': {'status': 'ok',
+                'urls': {'url': [{'codebase': 'https://dl.google.com/release/'}]},
+                'manifest': {'version': '156.0.0.1', 'run': 'installer_uncompressed.exe',
+                'packages': {'package': [{'name': 'payload.crx3', 'size': 10, 'hash_sha256': 'a' * 64}]}}}}]}}
+            with self.subTest(channel=channel), patch.object(archive.OPENER, 'open', return_value=io.BytesIO(b")]}'\n" + json.dumps(response).encode())) as opened:
+                result = archive.query_omaha('windows', 'x86', channel)
+                request = json.loads(opened.call_args.args[0].data)['request']
+                self.assertEqual(request['arch'], 'x86')
+                self.assertEqual(request['os']['arch'], 'x86')
+                self.assertEqual(request['app'][0]['ap'], '-arch_x86')
+                self.assertEqual(request['app'][0]['release_channel'], channel)
+                self.assertEqual(result.arch, 'x86')
+                self.assertIn('windows-x86-' + channel, result.original_asset)
+
+    def test_x86_binary_is_checked_as_i386_without_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'chrome.exe'
+            header = bytearray(128)
+            header[:2] = b'MZ'
+            struct.pack_into('<I', header, 0x3c, 0x40)
+            header[0x40:0x44] = b'PE\0\0'
+            struct.pack_into('<H', header, 0x44, 0x014c)
+            binary.write_bytes(header)
+            archive.validate_binary_arch(binary, 'windows', 'x86')
+            for arch in ('x64', 'arm64'):
+                with self.subTest(arch=arch), self.assertRaisesRegex(ValueError, 'PE architecture'):
+                    archive.validate_binary_arch(binary, 'windows', arch)
+
+    def test_x86_is_only_supported_for_windows(self):
+        for platform in ('macos', 'linux'):
+            with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, 'Unsupported target'):
+                offer(platform=platform, arch='x86')
+
     def test_uncompressed_original_gets_extra_xz_suffix_and_arch_prefix(self):
         item = offer()
         self.assertTrue(item.original_asset.endswith(item.original_name + '.xz'))
@@ -121,6 +158,16 @@ class SourceTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_release_accepts_windows_x86_and_lists_its_architecture(self):
+        item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x86')
+        publish.validate_manifest(item, item['version'])
+        title, body = publish.release_text(item['version'], [item])
+        self.assertEqual(title, '156.0.0.1 · Stable')
+        self.assertIn('| Stable | Windows | X86 |', body)
+        for platform in ('macos', 'linux'):
+            with self.subTest(platform=platform), self.assertRaises(ValueError):
+                publish.validate_manifest(dict(item, platform=platform), item['version'])
+
     def manifests(self):
         return [dict(schema_version=1, version='156.0.0.1', channel=channel,
                      platform=platform, architecture=arch)

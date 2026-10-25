@@ -7,14 +7,15 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-from chrome_archive import CHANNELS, VERSION, get_release, gh, sha256
+from chrome_archive import CHANNELS, VERSION, get_release, gh, sha256, validate_target
 
 
 def validate_manifest(value, version):
     if value.get('schema_version') != 1 or value.get('version') != version or not VERSION.fullmatch(version):
         raise ValueError('Invalid archive manifest version')
-    if value.get('platform') not in ('windows', 'macos', 'linux') or value.get('architecture') not in ('x64', 'arm64') or value.get('channel') not in CHANNELS:
-        raise ValueError('Invalid platform/architecture/channel')
+    validate_target(value.get('platform'), value.get('architecture'))
+    if value.get('channel') not in CHANNELS:
+        raise ValueError('Invalid channel')
     if value['platform'] == 'linux' and value['channel'] != 'stable':
         raise ValueError('Linux Extended Stable is unsupported')
     return value
