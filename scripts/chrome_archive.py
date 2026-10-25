@@ -130,7 +130,7 @@ class Offer:
         return [self.browser_asset]
 
 
-def query_omaha(platform, arch, channel):
+def query_omaha(platform, arch, channel, *, accept_crx3=True, target_version=None):
     validate_target(platform, arch)
     if platform not in ('windows', 'macos') or channel not in CHANNELS:
         raise ValueError('Unsupported Omaha target')
@@ -138,14 +138,20 @@ def query_omaha(platform, arch, channel):
     app_id = '{8A69D345-D564-463C-AFF1-A69D9E530F96}' if platform == 'windows' else 'com.google.Chrome'
     app = {'appid': app_id, 'version': '0.0.0.0', 'release_channel': channel,
            'installsource': 'taggedmi', 'updatecheck': {'sameversionupdate': True}}
+    if target_version is not None:
+        if not VERSION.fullmatch(target_version):
+            raise ValueError('Invalid target version')
+        app['updatecheck'].update(targetversionprefix=target_version, rollback_allowed=True)
     if platform == 'windows':
         app['ap'] = '-arch_' + arch
-    request = {'request': {'protocol': '3.1', 'ismachine': True, 'acceptformat': 'crx3',
+    request = {'request': {'protocol': '3.1', 'ismachine': True,
                           'sessionid': '{' + str(uuid.uuid4()) + '}', 'requestid': '{' + str(uuid.uuid4()) + '}',
                           '@updater': 'updater', 'prodversion': UPDATER_VERSION,
                           'updaterversion': UPDATER_VERSION, '@os': os_name, 'arch': arch,
                           'os': {'platform': os_name, 'arch': arch,
                                  'version': '10.0.26100.0' if os_name == 'win' else '15.0.0'}, 'app': [app]}}
+    if accept_crx3:
+        request['request']['acceptformat'] = 'crx3'
     req = urllib.request.Request(ENDPOINT, data=json.dumps(request).encode(),
                                  headers={'Content-Type': 'application/json', 'X-Goog-Update-Interactivity': 'fg'})
     with OPENER.open(req, timeout=60) as response:
@@ -154,6 +160,8 @@ def query_omaha(platform, arch, channel):
     if answer.get('appid', '').lower() != app_id.lower() or answer.get('status') != 'ok':
         raise RuntimeError(f'Unexpected Omaha response: {answer}')
     update = answer.get('updatecheck', {})
+    if not accept_crx3 and update.get('status') == 'noupdate':
+        return None
     if update.get('status') != 'ok':
         raise RuntimeError(f'No full package offered for {platform}/{arch}/{channel}: {update.get("status")}')
     manifest = update['manifest']
@@ -164,7 +172,7 @@ def query_omaha(platform, arch, channel):
     urls = [urllib.parse.urljoin(item['codebase'], urllib.parse.quote(safe_name(package['name'])))
             for item in update['urls']['url'] if item['codebase'].startswith('https://')]
     urls.sort(key=lambda url: urllib.parse.urlsplit(url).hostname != 'dl.google.com')
-    original = manifest['run'] if platform == 'windows' else package['name']
+    original = manifest.get('run', package['name']) if platform == 'windows' else package['name']
     return Offer(platform, arch, channel, manifest['version'], package['name'], int(package['size']),
                  package['hash_sha256'].lower(), tuple(urls), original, manifest.get('arguments', ''))
 

@@ -24,6 +24,28 @@ def offer(**changes):
 
 
 class SourceTests(unittest.TestCase):
+    def test_native_query_omits_crx3_and_uses_package_name_without_run(self):
+        import io
+        response = {'response': {'app': [{'appid': '{8A69D345-D564-463C-AFF1-A69D9E530F96}',
+            'status': 'ok', 'updatecheck': {'status': 'ok',
+            'urls': {'url': [{'codebase': 'https://dl.google.com/release/'}]},
+            'manifest': {'version': '156.0.0.1', 'packages': {'package': [
+                {'name': '156.0.0.1_chrome_installer_uncompressed.exe', 'size': 10, 'hash_sha256': 'a' * 64}]}}}}]}}
+        with patch.object(archive.OPENER, 'open', return_value=io.BytesIO(json.dumps(response).encode())) as opened:
+            result = archive.query_omaha('windows', 'x64', 'extended', accept_crx3=False, target_version='156.0.0.1')
+        request = json.loads(opened.call_args.args[0].data)['request']
+        self.assertNotIn('acceptformat', request)
+        self.assertEqual(request['app'][0]['release_channel'], 'extended')
+        self.assertEqual(request['app'][0]['ap'], '-arch_x64')
+        self.assertEqual(request['app'][0]['updatecheck']['targetversionprefix'], '156.0.0.1')
+        self.assertTrue(request['app'][0]['updatecheck']['rollback_allowed'])
+        self.assertEqual(result.original_name, '156.0.0.1_chrome_installer_uncompressed.exe')
+        response['response']['app'][0]['updatecheck'] = {'status': 'noupdate'}
+        with patch.object(archive.OPENER, 'open', side_effect=lambda *a, **k: io.BytesIO(json.dumps(response).encode())):
+            self.assertIsNone(archive.query_omaha('windows', 'x64', 'stable', accept_crx3=False))
+            with self.assertRaisesRegex(RuntimeError, 'No full package offered'):
+                archive.query_omaha('windows', 'x64', 'stable')
+
     def test_x86_requests_select_both_windows_channels(self):
         import io
         for channel in ('stable', 'extended'):
@@ -155,6 +177,52 @@ class SourceTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(publish, 'query_omaha', return_value=None)
+        self.native_query = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_matching_native_links_are_rendered_and_preserved_without_requery(self):
+        item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x64',
+                    source={'url': 'https://dl.google.com/package.crx3'})
+        self.native_query.return_value = offer(version=item['version'], package_name='156.0.0.1_chrome_installer_uncompressed.exe',
+                                              urls=('https://dl.google.com/156.0.0.1_chrome_installer_uncompressed.exe',))
+        enriched = publish.add_native_source_links([item, item])
+        self.native_query.assert_called_once_with('windows', 'x64', 'stable', accept_crx3=False)
+        _, body = publish.release_text(item['version'], enriched)
+        self.assertIn('[CRX3](https://dl.google.com/package.crx3) · [EXE](https://dl.google.com/156.0.0.1_chrome_installer_uncompressed.exe)', body)
+        restored = publish.existing_release_manifests(dict(tag_name=item['version'], body=body,
+                    assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', item['version'])}]))
+        self.native_query.reset_mock()
+        repeated = publish.add_native_source_links([*restored, item])
+        self.native_query.assert_not_called()
+        self.assertEqual(repeated[-1]['source']['native_url'], enriched[-1]['source']['native_url'])
+
+    def test_native_version_mismatch_is_not_linked_and_mac_zip_round_trips(self):
+        item = dict(schema_version=1, version='156.0.0.1', channel='extended', platform='macos', architecture='arm64',
+                    source={'url': 'https://dl.google.com/mac.crx3'})
+        self.native_query.return_value = offer(platform='macos', arch='arm64', channel='extended', version='155.0.0.1',
+                                              package_name='GoogleChrome-155.0.0.1.zip', urls=('https://dl.google.com/old.zip',))
+        missing = publish.add_native_source_links([item])
+        self.assertNotIn('native_url', missing[0]['source'])
+        self.assertNotIn('[ZIP]', publish.release_text(item['version'], missing)[1])
+        matched = dict(item, source={**item['source'], 'native_url': 'https://dl.google.com/GoogleChrome-156.0.0.1.zip'})
+        _, body = publish.release_text(item['version'], [matched])
+        restored = publish.existing_release_manifests(dict(tag_name=item['version'], body=body,
+                    assets=[{'name': archive.browser_asset_name('macos', 'arm64', 'extended', item['version'])}]))
+        self.assertEqual(restored[0]['source']['native_url'], matched['source']['native_url'])
+
+    def test_native_source_retries_the_archived_version_when_latest_differs(self):
+        item = dict(schema_version=1, version='152.0.0.1', channel='extended', platform='windows', architecture='x86',
+                    source={'url': 'https://dl.google.com/original.crx3'})
+        latest = offer(arch='x86', channel='extended', version='156.0.0.1', package_name='156.0.0.1_chrome_installer_uncompressed.exe')
+        exact = offer(arch='x86', channel='extended', version='152.0.0.1', package_name='152.0.0.1_chrome_installer_uncompressed.exe',
+                      urls=('https://dl.google.com/152.0.0.1_chrome_installer_uncompressed.exe',))
+        self.native_query.side_effect = [latest, exact]
+        enriched = publish.add_native_source_links([item])
+        self.native_query.assert_called_with('windows', 'x86', 'extended', accept_crx3=False, target_version=item['version'])
+        self.assertEqual(enriched[0]['source']['native_url'], exact.urls[0])
+
     def test_linux_rpm_links_match_version_and_survive_incremental_release(self):
         version = '156.0.0.1'
         item = dict(schema_version=1, version=version, channel='stable', platform='linux', architecture='arm64',
@@ -204,12 +272,15 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(len(restored), 1)
         self.assertEqual(restored[0]['source']['url'], 'https://dl.google.com/windows.crx3')
         self.assertEqual(restored[0]['architecture'], 'x86')
+        legacy = publish.existing_release_manifests({'tag_name': '156.0.0.1',
+                    'body': body.replace('[CRX3]', '[Google original]'), 'assets': [{'name': name}]})
+        self.assertEqual(legacy, restored)
 
     def test_release_links_to_the_actual_official_source_and_deduplicates_rows(self):
         item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x86',
                     source={'url': 'https://dl.google.com/release2/chrome/version/payload.crx3'})
         _, body = publish.release_text(item['version'], [item, item])
-        self.assertIn('[Google original](https://dl.google.com/release2/chrome/version/payload.crx3)', body)
+        self.assertIn('[CRX3](https://dl.google.com/release2/chrome/version/payload.crx3)', body)
         self.assertEqual(body.count('| Stable | Windows | X86 |'), 1)
         with self.assertRaises(ValueError):
             publish.release_text(item['version'], [dict(item, source={'url': 'https://evil.example/download'})])
