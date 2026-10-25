@@ -65,7 +65,7 @@ class SourceTests(unittest.TestCase):
             'manifest': {'version': '156.0.0.1', 'packages': {'package': [
                 {'name': '156.0.0.1_chrome_installer_uncompressed.exe', 'size': 10, 'hash_sha256': 'a' * 64}]}}}}]}}
         with patch.object(archive.OPENER, 'open', return_value=io.BytesIO(json.dumps(response).encode())) as opened:
-            result = archive.query_omaha('windows', 'x64', 'extended', accept_crx3=False, target_version='156.0.0.1')
+            result = archive.query_omaha('windows', 'x64', 'extended', allow_no_update=True, target_version='156.0.0.1')
         request = json.loads(opened.call_args.args[0].data)['request']
         self.assertNotIn('acceptformat', request)
         self.assertEqual(request['app'][0]['release_channel'], 'extended')
@@ -75,7 +75,7 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(result.original_name, '156.0.0.1_chrome_installer_uncompressed.exe')
         response['response']['app'][0]['updatecheck'] = {'status': 'noupdate'}
         with patch.object(archive.OPENER, 'open', side_effect=lambda *a, **k: io.BytesIO(json.dumps(response).encode())):
-            self.assertIsNone(archive.query_omaha('windows', 'x64', 'stable', accept_crx3=False))
+            self.assertIsNone(archive.query_omaha('windows', 'x64', 'stable', allow_no_update=True))
             with self.assertRaisesRegex(RuntimeError, 'No full package offered'):
                 archive.query_omaha('windows', 'x64', 'stable')
 
@@ -86,10 +86,11 @@ class SourceTests(unittest.TestCase):
                 'status': 'ok', 'updatecheck': {'status': 'ok',
                 'urls': {'url': [{'codebase': 'https://dl.google.com/release/'}]},
                 'manifest': {'version': '156.0.0.1', 'run': 'installer_uncompressed.exe',
-                'packages': {'package': [{'name': 'payload.crx3', 'size': 10, 'hash_sha256': 'a' * 64}]}}}}]}}
+                'packages': {'package': [{'name': '156.0.0.1_chrome_installer_uncompressed.exe', 'size': 10, 'hash_sha256': 'a' * 64}]}}}}]}}
             with self.subTest(channel=channel), patch.object(archive.OPENER, 'open', return_value=io.BytesIO(b")]}'\n" + json.dumps(response).encode())) as opened:
                 result = archive.query_omaha('windows', 'x86', channel)
                 request = json.loads(opened.call_args.args[0].data)['request']
+                self.assertNotIn('acceptformat', request)
                 self.assertEqual(request['arch'], 'x86')
                 self.assertEqual(request['os']['arch'], 'x86')
                 self.assertEqual(request['app'][0]['ap'], '-arch_x86')
@@ -155,14 +156,65 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(archive.parse_deb_index(text, 'x64').version, '156.0.0.1')
         self.assertEqual(archive.parse_deb_index(text, 'arm64').version, '157.0.0.1')
 
-    def test_crx_rejects_zip_traversal(self):
+    def test_zip_rejects_traversal(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'test.crx3'
-            path.write_bytes(struct.pack('<4sII', b'Cr24', 3, 0))
-            with zipfile.ZipFile(path, 'a') as package:
+            path = Path(directory) / 'test.zip'
+            with zipfile.ZipFile(path, 'w') as package:
                 package.writestr('../escape', b'x')
             with self.assertRaisesRegex(ValueError, 'Unsafe ZIP path'):
-                archive.validate_crx(path)
+                archive.validate_zip(path)
+
+    def test_macos_query_returns_standard_zip_and_rejects_crx_package(self):
+        import io
+        response = {'response': {'app': [{'appid': 'com.google.Chrome', 'status': 'ok',
+            'updatecheck': {'status': 'ok', 'urls': {'url': [{'codebase': 'https://dl.google.com/releases/'}]},
+            'manifest': {'version': '156.0.0.1', 'packages': {'package': [
+                {'name': 'GoogleChrome-156.0.0.1.zip', 'size': 10, 'hash_sha256': 'a' * 64}]}}}}]}}
+        with patch.object(archive.OPENER, 'open', side_effect=lambda *a, **k: io.BytesIO(json.dumps(response).encode())) as opened:
+            result = archive.query_omaha('macos', 'arm64', 'stable')
+            request = json.loads(opened.call_args.args[0].data)['request']
+            self.assertNotIn('acceptformat', request)
+            self.assertEqual(result.original_name, 'GoogleChrome-156.0.0.1.zip')
+            response['response']['app'][0]['updatecheck']['manifest']['packages']['package'][0]['name'] = 'unexpected.crx3'
+            with self.assertRaisesRegex(ValueError, 'Expected native .zip package'):
+                archive.query_omaha('macos', 'arm64', 'stable')
+
+    def test_zip_rejects_crx_wrapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'wrapped.zip'
+            path.write_bytes(struct.pack('<4sII', b'Cr24', 3, 0))
+            with zipfile.ZipFile(path, 'a') as package:
+                package.writestr('Google Chrome.app/test', b'data')
+            with self.assertRaisesRegex(ValueError, 'Not a standard ZIP'):
+                archive.validate_zip(path)
+
+    def test_windows_build_uses_downloaded_exe_directly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            item = offer(package_name='installer.exe', urls=('https://dl.google.com/installer.exe',))
+            package = root / item.package_name
+            package.write_bytes(b'downloaded EXE fixture')
+            def extract(command, action, original, destination, *args):
+                self.assertEqual((action, original), ('x', package))
+                browser = Path(destination[2:]) / 'Chrome-bin'
+                (browser / item.version).mkdir(parents=True)
+                (browser / item.version / 'chrome.dll').write_bytes(b'dll')
+                header = bytearray(128)
+                header[:2] = b'MZ'
+                struct.pack_into('<I', header, 0x3c, 0x40)
+                header[0x40:0x44] = b'PE\0\0'
+                struct.pack_into('<H', header, 0x44, 0x8664)
+                (browser / 'chrome.exe').write_bytes(header)
+            def compress(command, source, destination):
+                destination.write_bytes(b'verified browser archive fixture')
+            with patch.object(archive, 'verify_pe_version') as verify, \
+                 patch.object(archive, 'seven_zip', side_effect=extract), patch.object(archive, 'compress', side_effect=compress):
+                files = archive.build(item, package, root / 'dist', '7zz')
+            verify.assert_called_once_with(package, item.version, '7zz')
+            metadata = json.loads(files[1].read_text())
+            self.assertEqual(metadata['source']['url'], item.urls[0])
+            self.assertEqual(metadata['source']['format'], 'EXE')
+            self.assertFalse(metadata['installer_executed'])
 
     def test_architecture_is_read_without_running_binary(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -186,9 +238,8 @@ class SourceTests(unittest.TestCase):
         import stat
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            path = root / 'app.crx3'
-            path.write_bytes(struct.pack('<4sII', b'Cr24', 3, 0))
-            with zipfile.ZipFile(path, 'a') as package:
+            path = root / 'app.zip'
+            with zipfile.ZipFile(path, 'w') as package:
                 binary = zipfile.ZipInfo('Chrome.app/Versions/1/Resources/helper')
                 binary.external_attr = (stat.S_IFREG | 0o755) << 16
                 package.writestr(binary, b'data')
@@ -215,15 +266,41 @@ class ReleaseTests(unittest.TestCase):
         self.native_query = patcher.start()
         self.addCleanup(patcher.stop)
 
+    def test_native_inputs_need_no_second_query_and_round_trip_as_primary_links(self):
+        items = [dict(schema_version=1, version='156.0.0.1', channel='stable', platform=platform, architecture='x64',
+                      source={'url': f'https://dl.google.com/package.{suffix}'})
+                 for platform, suffix in [('windows', 'exe'), ('macos', 'zip')]]
+        enriched = publish.add_native_source_links(items)
+        self.native_query.assert_not_called()
+        _, body = publish.release_text('156.0.0.1', enriched)
+        self.assertIn('[EXE](https://dl.google.com/package.exe)', body)
+        self.assertIn('[ZIP](https://dl.google.com/package.zip)', body)
+        self.assertNotIn('[CRX3]', body)
+        self.assertNotIn('Legacy CRX3', body)
+        release = dict(tag_name='156.0.0.1', body=body, assets=[{'name': archive.browser_asset_name(i['platform'], 'x64', 'stable', i['version'])} for i in items])
+        restored = publish.existing_release_manifests(release)
+        self.assertEqual({i['source']['url'] for i in restored}, {i['source']['url'] for i in items})
+
+    def test_old_crx_and_exe_table_is_readable_and_prefers_native_link(self):
+        version = '156.0.0.1'
+        body = '| Stable | Windows | X64 | [CRX3](https://dl.google.com/old.crx3) · [EXE](https://dl.google.com/native.exe) |\n'
+        release = dict(tag_name=version, body=body, assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', version)}])
+        restored = publish.existing_release_manifests(release)
+        self.assertEqual(restored[0]['source']['url'], 'https://dl.google.com/old.crx3')
+        _, updated = publish.release_text(version, restored)
+        self.assertIn('[EXE](https://dl.google.com/native.exe)', updated)
+        self.assertNotIn('[CRX3]', updated)
+
     def test_matching_native_links_are_rendered_and_preserved_without_requery(self):
         item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x64',
                     source={'url': 'https://dl.google.com/package.crx3'})
         self.native_query.return_value = offer(version=item['version'], package_name='156.0.0.1_chrome_installer_uncompressed.exe',
                                               urls=('https://dl.google.com/156.0.0.1_chrome_installer_uncompressed.exe',))
         enriched = publish.add_native_source_links([item, item])
-        self.native_query.assert_called_once_with('windows', 'x64', 'stable', accept_crx3=False)
+        self.native_query.assert_called_once_with('windows', 'x64', 'stable', allow_no_update=True)
         _, body = publish.release_text(item['version'], enriched)
-        self.assertIn('[CRX3](https://dl.google.com/package.crx3) · [EXE](https://dl.google.com/156.0.0.1_chrome_installer_uncompressed.exe)', body)
+        self.assertIn('[EXE](https://dl.google.com/156.0.0.1_chrome_installer_uncompressed.exe)', body)
+        self.assertNotIn('[CRX3]', body)
         restored = publish.existing_release_manifests(dict(tag_name=item['version'], body=body,
                     assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', item['version'])}]))
         self.native_query.reset_mock()
@@ -239,6 +316,7 @@ class ReleaseTests(unittest.TestCase):
         missing = publish.add_native_source_links([item])
         self.assertNotIn('native_url', missing[0]['source'])
         self.assertNotIn('[ZIP]', publish.release_text(item['version'], missing)[1])
+        self.assertIn('Legacy CRX3', publish.release_text(item['version'], missing)[1])
         matched = dict(item, source={**item['source'], 'native_url': 'https://dl.google.com/GoogleChrome-156.0.0.1.zip'})
         _, body = publish.release_text(item['version'], [matched])
         restored = publish.existing_release_manifests(dict(tag_name=item['version'], body=body,
@@ -253,7 +331,7 @@ class ReleaseTests(unittest.TestCase):
                       urls=('https://dl.google.com/152.0.0.1_chrome_installer_uncompressed.exe',))
         self.native_query.side_effect = [latest, exact]
         enriched = publish.add_native_source_links([item])
-        self.native_query.assert_called_with('windows', 'x86', 'extended', accept_crx3=False, target_version=item['version'])
+        self.native_query.assert_called_with('windows', 'x86', 'extended', allow_no_update=True, target_version=item['version'])
         self.assertEqual(enriched[0]['source']['native_url'], exact.urls[0])
 
     def test_only_currently_discovered_versions_are_refreshed(self):

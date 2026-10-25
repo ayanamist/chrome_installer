@@ -8,14 +8,14 @@
 
 - Windows app ID：`{8A69D345-D564-463C-AFF1-A69D9E530F96}`，AP 指定 `-arch_x86`／`-arch_x64`／`-arch_arm64`。
 - macOS app ID：`com.google.Chrome`，请求的 OS／arch 对应目标架构。
-- 请求 `acceptformat=crx3`，禁用对增量格式的依赖，获取可独立检查的完整包。
+- 不声明 `acceptformat`。Windows 必须返回 `.exe`，macOS 必须返回标准 `.zip`；意外返回 CRX3 等其他格式时明确报错，不回退下载。
 - 只使用 Google HTTPS 地址及 Google HTTPS 重定向。
-- 按服务器清单核对包大小和 SHA-256，检查 CRX3 头部及 ZIP 路径。
-- Windows 从 CRX3 提取清单指定的完整 EXE，使用 Linux 7-Zip 读取 PE 产品版本；使用 7-Zip 解出嵌入的 `Chrome-bin`，检查对应版本的 chrome.dll 及 chrome.exe 的 PE 架构。x86 的 PE Machine 必须为 `0x014c`，x64 为 `0x8664`，ARM64 为 `0xaa64`。
-- macOS 下载并校验 CRX3，按 ZIP 文件模式恢复 `.app`，先写普通文件，再恢复检查过的符号链接；使用 tar.xz 保留权限和符号链接，验证 Info.plist 版本和 Mach-O 支持的架构。全流程在 Linux runner 执行，不调用原生 macOS 命令。
+- 按同一份服务器清单核对原始 EXE／ZIP 的大小和 SHA-256；macOS 还检查标准 ZIP 头、成员路径及符号链接目标。
+- Windows 直接下载清单指定的完整 EXE，使用 Linux 7-Zip 读取 PE 产品版本；使用 7-Zip 解出嵌入的 `Chrome-bin`，检查对应版本的 chrome.dll 及 chrome.exe 的 PE 架构。x86 的 PE Machine 必须为 `0x014c`，x64 为 `0x8664`，ARM64 为 `0xaa64`。
+- macOS 下载并校验标准 ZIP，按 ZIP 文件模式恢复 `.app`，先写普通文件，再恢复检查过的符号链接；使用 tar.xz 保留权限和符号链接，验证 Info.plist 版本和 Mach-O 支持的架构。全流程在 Linux runner 执行，不调用原生 macOS 命令。
 - 服务器返回的安装命令参数仅作为证据记录，永不执行。
-- 发布阶段额外发出不含 `acceptformat` 的独立 Omaha 请求，发现 Windows 原始 uncompressed EXE、macOS updater ZIP；只记录与归档版本、平台、架构、通道一致的固定 URL。若最新响应不匹配，则追加 `targetversionprefix=归档四段版本号` 的查询；仍不匹配或无可用包时省略并记录日志。`rollback_allowed` 只出现在该只读查询中，没有执行安装或回退。不下载或执行这些替代格式。CRX3 与非 CRX3 响应可能提供不同版本，因此不能简单替换后缀或拼接路径。
-- Release 表格明确标记 `[CRX3]`、`[EXE]`、`[ZIP]`。没有匹配的 EXE／ZIP 时仍保留完整 CRX3 来源；后续增量发布保留已记录的替代链接，兼容早期 `[Google original]` 来源行。
+- Release 原包来源直接使用此次下载的 EXE／ZIP URL，不再为了新归档额外查询另一种容器格式。
+- 兼容旧 `[Google original]`／`[CRX3]` 及 CRX3+EXE／ZIP 双链接来源表；旧记录若已有同版本原生链接则优先显示原生链接，尚无链接时才尝试同目标查询及固定版本查询。`rollback_allowed` 只用于恢复历史来源的只读查询，不执行安装或回退；无法恢复时保留旧来源，避免丢失已归档的覆盖组合。新记录直接使用 `[EXE]`／`[ZIP]`，读取器同时支持两种格式。
 
 来源：
 
@@ -25,7 +25,7 @@
 - [序列化为 release_channel](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/protocol_serializer_json.cc)
 - [Google 对 Extended Stable 平台范围的说明](https://support.google.com/chrome/a/answer/16942104?hl=en)
 
-限制：没有执行 Windows Authenticode 或 macOS codesign 原生签名验证。这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验或 CRX3 publisher proof 验证；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在范围内。
+限制：没有执行 Windows Authenticode 或 macOS codesign 原生签名验证。这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在范围内。
 
 ## Linux
 
@@ -44,7 +44,7 @@
 
 ## 发布约定
 
-Tag 始终为官方响应的四段 Chrome 版本号，不包含通道、平台或架构。GitHub 同一 tag 只有一个 Release，因此同版本的所有成功归档组合共用 Release。标题列出实际通道，描述列出实际覆盖的通道、平台、架构，以及 manifest 中记录的 Google 官方原始下载 URL，并补充同版本的官方 EXE／ZIP／RPM 链接。纯文件产物由构建 job 生成，统一发布 job 串行处理，避免矩阵任务争抢同一个 tag。
+Tag 始终为官方响应的四段 Chrome 版本号，不包含通道、平台或架构。GitHub 同一 tag 只有一个 Release，因此同版本的所有成功归档组合共用 Release。标题列出实际通道，描述列出实际覆盖的通道、平台、架构，以及 manifest 中记录的 Google 官方原始下载 URL，Windows／macOS 为原始 EXE／ZIP，Linux 另补同版本 RPM 链接。纯文件产物由构建 job 生成，统一发布 job 串行处理，避免矩阵任务争抢同一个 tag。
 
 每个组合只上传解包后重新生成的 Windows browser.7z 或 macOS／Linux browser.tar.xz。macOS tar.xz 的根目录为完整的 `Google Chrome.app/` 应用包目录；Release 的 Assets 说明明确标注该名称和解压后的内容，并保留权限及符号链接。原始 EXE、EXE.xz、CRX3、DEB、RPM、manifest 和 SHA256SUMS 都不是 Release 附件。官方原始 URL 放在 Release 描述的来源表中。manifest 仅在临时工作流 artifact 内流转，集中发布后不作为独立公开文件保留；后续发布从已有说明表恢复来源及覆盖范围，并核对对应浏览器附件确实存在。GitHub Actions 临时 artifact 不作为长期存储；最终存储位置是 Release assets。仅在全部附件上传成功后发布新 draft；重试补充缺失附件，不覆盖已有文件。
 
@@ -85,22 +85,15 @@ Workflow 使用官方维护的大版本 tag，自动跟随该大版本内的兼�
 
 2026-10-25 的[带阶段日志任务 40180189315](https://github.com/ayanamist/chrome_installer/actions/runs/40180189315)已完成，发布 3 个 Release、12 个浏览器归档，未上传原包或元数据附件。runner 实测：Linux x64 下载 0.762 秒、tar.xz 压缩 171.689 秒（self CPU 171.360 秒）；macOS x64 Stable 下载 4.978 秒、tar.xz 压缩 309.056 秒（self CPU 309.026 秒）；Windows x64 Stable 下载 2.232 秒、7z 压缩 115.706 秒（已结束子进程 CPU 174.67 秒）。这些组合的主要耗时为 CPU 压缩，两个通道在同一 job 内串行；结论仅对应这次 runner 实测，压缩参数尚未调整。
 
-## 原包来源覆盖核对（2026-10-25）
+## 原包来源覆盖与历史格式迁移（2026-10-25）
 
-当前来源表覆盖归档输入 CRX3／DEB，及能从官方响应匹配版本和目标的 EXE／ZIP／RPM，不宣称覆盖 Google 所有分发格式。Windows MSI／Enterprise Bundle、macOS DMG／PKG 均属于另外的分发入口，不能把会随时间变化的 latest/current URL 当成某个历史版本的下载地址。Chrome for Testing 是另一个构建变体，也不混入普通 Chrome 原包来源。
+当前下载链路为 Windows EXE → Chrome-bin → browser.7z；macOS ZIP → Google Chrome.app → browser.tar.xz；Linux DEB → opt/google/chrome → browser.tar.xz。不声明 acceptformat，不再提取 CRX3 内嵌 EXE。源码删除了 CRX3 校验及解包分支；标准 ZIP 路径／符号链接安全检查、PE／Mach-O／ELF 版本或架构校验、归档回读校验均保留。
 
-实测 Windows x64 Stable `156.0.8078.48`：不发送 `acceptformat`，Google 直接提供 `156.0.8078.48_chrome_installer_uncompressed.exe`，大小 527126440 字节，SHA-256 `84e13e72c71a3b7d767c115e8e94ec81cb563f9bf9a782407a54afceaa37f55a`；与 CRX3 内同名成员完全一致。两种响应的 codebase 不同，不能直接在 CRX3 URL 的目录下替换文件名。可复核请求的核心差异如下（其余目标字段保持一致）：
+切换前的实测：Windows x64 Stable `156.0.8078.48` 原始 uncompressed EXE 大小 527126440 字节，SHA-256 为 `84e13e72c71a3b7d767c115e8e94ec81cb563f9bf9a782407a54afceaa37f55a`，与旧 CRX3 内同名成员完全一致。CRX3 与 EXE 的 codebase 不同，因此迁移来源使用实际查询结果，不替换后缀拼接 URL。无 acceptformat 的 macOS updater ZIP 是普通 Chrome 分发文件，不是 Chrome for Testing。
 
-```python
-# 归档构建输入
-query_omaha('windows', 'x64', 'stable')
-# 仅查询独立 EXE；不下载、不安装
-query_omaha('windows', 'x64', 'stable', accept_crx3=False, target_version='156.0.8078.48')
-```
+旧 Release 附件不因输入格式变化而重建或覆盖。描述刷新仍仅针对本轮官方响应的版本集合，旧来源读取兼容用于保留通道／平台／架构与已记录的原始链接。原生链接已经存在的新记录不会再次查询另一份下载清单。
 
-macOS 的无 acceptformat 请求返回 `GoogleChrome-版本.zip`（Extended Stable 带 `-ExtendedStable` 后缀）；它是普通 Chrome 的 updater ZIP，不是 Chrome for Testing ZIP。本轮 macOS x64 Stable 两次查询分别返回 CRX3 `156.0.8078.47`、ZIP `155.0.8059.86`，故不能把该 ZIP 链接放入 `156.0.8078.47` 的来源行。
-
-官方其他分发格式依据：[Windows 企业包内容](https://support.google.com/chrome/a/answer/7650032)、[macOS 下载说明](https://support.google.com/chrome/a/answer/9020580?hl=en)、[macOS PKG 与 DMG](https://cloud.google.com/blog/products/chrome-enterprise/simplifying-chrome-deployments-on-macos)。未对 MSI／DMG／PKG 做历史版本定位，也没有新增原包 Release 附件。
+来源表不宣称覆盖 Google 所有分发格式。Windows MSI／Enterprise Bundle、macOS DMG／PKG 未做历史版本定位，不放浮动 latest/current URL。依据：[Windows 企业包内容](https://support.google.com/chrome/a/answer/7650032)、[macOS 下载说明](https://support.google.com/chrome/a/answer/9020580?hl=en)、[macOS PKG 与 DMG](https://cloud.google.com/blog/products/chrome-enterprise/simplifying-chrome-deployments-on-macos)。Chrome for Testing 属于另一种构建，不混入普通 Chrome 原包来源。
 
 ## 当前可获取版本的 Release 描述更新
 

@@ -130,7 +130,7 @@ class Offer:
         return [self.browser_asset]
 
 
-def query_omaha(platform, arch, channel, *, accept_crx3=True, target_version=None):
+def query_omaha(platform, arch, channel, *, target_version=None, allow_no_update=False):
     validate_target(platform, arch)
     if platform not in ('windows', 'macos') or channel not in CHANNELS:
         raise ValueError('Unsupported Omaha target')
@@ -150,8 +150,6 @@ def query_omaha(platform, arch, channel, *, accept_crx3=True, target_version=Non
                           'updaterversion': UPDATER_VERSION, '@os': os_name, 'arch': arch,
                           'os': {'platform': os_name, 'arch': arch,
                                  'version': '10.0.26100.0' if os_name == 'win' else '15.0.0'}, 'app': [app]}}
-    if accept_crx3:
-        request['request']['acceptformat'] = 'crx3'
     req = urllib.request.Request(ENDPOINT, data=json.dumps(request).encode(),
                                  headers={'Content-Type': 'application/json', 'X-Goog-Update-Interactivity': 'fg'})
     with OPENER.open(req, timeout=60) as response:
@@ -160,7 +158,7 @@ def query_omaha(platform, arch, channel, *, accept_crx3=True, target_version=Non
     if answer.get('appid', '').lower() != app_id.lower() or answer.get('status') != 'ok':
         raise RuntimeError(f'Unexpected Omaha response: {answer}')
     update = answer.get('updatecheck', {})
-    if not accept_crx3 and update.get('status') == 'noupdate':
+    if allow_no_update and update.get('status') == 'noupdate':
         return None
     if update.get('status') != 'ok':
         raise RuntimeError(f'No full package offered for {platform}/{arch}/{channel}: {update.get("status")}')
@@ -169,12 +167,14 @@ def query_omaha(platform, arch, channel, *, accept_crx3=True, target_version=Non
     if len(packages) != 1:
         raise ValueError('Expected one full package')
     package = packages[0]
+    suffix = '.exe' if platform == 'windows' else '.zip'
+    if not package['name'].lower().endswith(suffix):
+        raise ValueError(f'Expected native {suffix} package, received {package["name"]}')
     urls = [urllib.parse.urljoin(item['codebase'], urllib.parse.quote(safe_name(package['name'])))
             for item in update['urls']['url'] if item['codebase'].startswith('https://')]
     urls.sort(key=lambda url: urllib.parse.urlsplit(url).hostname != 'dl.google.com')
-    original = manifest.get('run', package['name']) if platform == 'windows' else package['name']
     return Offer(platform, arch, channel, manifest['version'], package['name'], int(package['size']),
-                 package['hash_sha256'].lower(), tuple(urls), original, manifest.get('arguments', ''))
+                 package['hash_sha256'].lower(), tuple(urls), package['name'], manifest.get('arguments', ''))
 
 
 def parse_deb_index(text, arch):
@@ -251,11 +251,11 @@ def download(offer, cache):
     raise RuntimeError(f'All downloads failed: {errors}')
 
 
-def validate_crx(path):
+def validate_zip(path):
     with path.open('rb') as stream:
-        magic, version, length = struct.unpack('<4sII', stream.read(12))
-    if magic != b'Cr24' or version != 3 or length + 12 >= path.stat().st_size:
-        raise ValueError('Not a valid CRX3 container')
+        magic = stream.read(4)
+    if magic not in (b'PK\x03\x04', b'PK\x05\x06'):
+        raise ValueError('Not a standard ZIP package')
     with zipfile.ZipFile(path) as archive:
         for info in archive.infolist():
             name = info.filename.replace('\\', '/')
@@ -277,7 +277,7 @@ def validate_crx(path):
 
 def extract_app_zip(package, destination):
     """Restore app-bundle links after ordinary files; preserve executable modes."""
-    validate_crx(package)
+    validate_zip(package)
     destination.mkdir()
     root = destination.resolve()
     links = []
@@ -426,16 +426,7 @@ def build(offer, package, output, command):
     with tempfile.TemporaryDirectory(prefix='.chrome-archive-', dir=output.resolve().parent) as directory:
         workspace = Path(directory)
         if offer.platform == 'windows':
-            original = workspace / offer.original_name
-            with stage('extract_installer', package=package, input_bytes=package.stat().st_size) as stats:
-                validate_crx(package)
-                with zipfile.ZipFile(package) as archive:
-                    matches = [info for info in archive.infolist() if info.filename == offer.original_name]
-                    if len(matches) != 1:
-                        raise ValueError('Expected one manifest installer')
-                    with archive.open(matches[0]) as source, original.open('wb') as destination:
-                        shutil.copyfileobj(source, destination)
-                stats['output_bytes'] = original.stat().st_size
+            original = package
             with stage('verify_pe_version', file=original):
                 verify_pe_version(original, offer.version, command)
             payload = workspace / 'payload'
@@ -478,6 +469,7 @@ def build(offer, package, output, command):
                     'channel': offer.channel, 'channel_name': CHANNELS[offer.channel],
                     'platform': offer.platform, 'architecture': offer.arch,
                     'source': {'url': offer.urls[0], 'package': offer.package_name,
+                               'format': {'windows': 'EXE', 'macos': 'ZIP', 'linux': 'DEB'}[offer.platform],
                                'sha256': offer.digest, 'size': offer.size,
                                'original_name': offer.original_name, 'arguments_not_executed': offer.arguments},
                     'native_signature_verification': 'not performed; package SHA256 verified against official HTTPS manifest',

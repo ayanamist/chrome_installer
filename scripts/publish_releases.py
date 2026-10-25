@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import urllib.parse
 
 from chrome_archive import CHANNELS, VERSION, browser_asset_name, get_release, gh, google_https, query_omaha, sha256, validate_target
 from archive_logging import log_context, log_event, log_runtime, stage
@@ -31,23 +32,25 @@ def release_text(version, manifests):
     body = f'# Chrome {version}\n\n'
     body += 'Official Google download payloads, archived without executing an installer.\n\n'
     body += '| Channel | Platform | Architecture | Official original download |\n|---|---|---|---|\n'
+    legacy_sources = False
     for channel, platform, arch in rows:
         source = entries[(channel, platform, arch)].get('source', {})
-        url = source.get('url')
-        label = 'DEB' if platform == 'linux' else 'CRX3'
+        url = source.get('url') if platform == 'linux' else source.get('native_url') or source.get('url')
+        suffix = urllib.parse.urlsplit(url).path.lower().rsplit('.', 1)[-1] if url else ''
+        label = {'exe': 'EXE', 'zip': 'ZIP', 'deb': 'DEB', 'crx3': 'CRX3'}.get(suffix, 'Google original')
+        legacy_sources |= label == 'CRX3'
         link = f'[{label}]({google_https(url)})' if url else '—'
         if platform == 'linux' and source.get('rpm_url'):
             link += f' · [RPM]({google_https(source["rpm_url"])})'
-        if platform != 'linux' and source.get('native_url'):
-            label = 'EXE' if platform == 'windows' else 'ZIP'
-            link += f' · [{label}]({google_https(source["native_url"])})'
         body += f'| {CHANNELS[channel]} | {dict(windows="Windows", macos="macOS", linux="Linux")[platform]} | {arch.upper()} | {link} |\n'
     body += '\n## Assets\n\n'
     body += '- `chrome-windows-*-browser.7z`: extracted Windows browser files, with `Chrome-bin/` as the archive root.\n'
     body += '- `chrome-macos-*-browser.tar.xz`: the complete `Google Chrome.app/` application bundle, preserving file contents, Unix modes and symbolic links. Extract the archive to obtain the `.app` directory.\n'
     body += '- `chrome-linux-*-browser.tar.xz`: extracted Linux browser files, with `chrome/` as the archive root, preserving Unix modes and symbolic links.\n'
-    body += '- Official original files are available from the Google links in the table above. Windows/macOS CRX3 links identify the exact archive input; EXE (Windows uncompressed installer), ZIP (macOS updater package), and RPM links are included only when the official response matches the archived version and target. Linux browser files are extracted from DEB.\n'
-    body += '- CRX3 contains the original Windows installer or macOS app bundle. A missing EXE/ZIP link means no matching alternate was recorded; it does not mean the CRX3 lacks those contents. MSI, DMG, PKG and Enterprise bundles are not enumerated here.\n'
+    body += '- Official original downloads: EXE is the Windows uncompressed installer; ZIP is the macOS updater package containing the app bundle; DEB is the Linux archive input, with a matching-version RPM link when available.\n'
+    body += '- EXE/ZIP links point directly to official packages for the archived version. MSI, DMG, PKG and Enterprise bundles are not enumerated here.\n'
+    if legacy_sources:
+        body += '- Legacy CRX3 links are retained where no matching EXE/ZIP source was recovered for an older archive.\n'
     body += '- Asset prefixes identify platform, architecture and channel.\n'
     body += '- Only the repacked browser archives are release attachments; original files and workflow metadata are not uploaded as release assets.\n\n'
     body += 'Linux has no official Extended Stable channel. Extracted archives do not install dependencies or updater integration.\n'
@@ -71,13 +74,16 @@ def add_linux_rpm_links(manifests):
 
 
 def add_native_source_links(manifests):
-    """Discover standalone updater packages, retaining already recorded links."""
+    """Recover native links for legacy records; native inputs need no requery."""
     known = {(item['platform'], item['architecture'], item['channel'], item['version']): item['source']['native_url']
              for item in manifests if item.get('source', {}).get('native_url')}
     queried = {}
     result = []
     for item in manifests:
-        if item['platform'] == 'linux' or item.get('source', {}).get('native_url'):
+        source = item.get('source', {})
+        suffix = '.exe' if item['platform'] == 'windows' else '.zip'
+        native_input = urllib.parse.urlsplit(source.get('url', '')).path.lower().endswith(suffix)
+        if item['platform'] == 'linux' or source.get('native_url') or native_input:
             result.append(item)
             continue
         key = (item['platform'], item['architecture'], item['channel'], item['version'])
@@ -86,14 +92,14 @@ def add_native_source_links(manifests):
             target = key[:3]
             if target not in queried:
                 with stage('query_native_source', platform=target[0], architecture=target[1], channel=target[2]):
-                    queried[target] = query_omaha(*target, accept_crx3=False)
+                    queried[target] = query_omaha(*target, allow_no_update=True)
             offer = queried[target]
             if offer is None or offer.version != item['version']:
                 pinned = (*target, item['version'])
                 if pinned not in queried:
                     with stage('query_native_source_version', platform=target[0], architecture=target[1],
                                channel=target[2], version=item['version']):
-                        queried[pinned] = query_omaha(*target, accept_crx3=False, target_version=item['version'])
+                        queried[pinned] = query_omaha(*target, allow_no_update=True, target_version=item['version'])
                 offer = queried[pinned]
             if offer is not None and offer.version == item['version']:
                 expected = '_chrome_installer_uncompressed.exe' if item['platform'] == 'windows' else '.zip'
@@ -135,15 +141,19 @@ def local_groups(root):
 
 def existing_release_manifests(release):
     """The published table retains provenance; no metadata release assets needed."""
-    pattern = re.compile(r'^\|\s*(Stable|Extended Stable)\s*\|\s*(Windows|macOS|Linux)\s*\|\s*(X86|X64|ARM64)\s*\|\s*\[(?:Google original|CRX3|DEB)\]\((https://[^\s)]+)\)(?:\s*·\s*\[(RPM|EXE|ZIP)\]\((https://[^\s)]+)\))?\s*\|\s*$', re.M)
+    pattern = re.compile(r'^\|\s*(Stable|Extended Stable)\s*\|\s*(Windows|macOS|Linux)\s*\|\s*(X86|X64|ARM64)\s*\|\s*\[(Google original|CRX3|EXE|ZIP|DEB)\]\((https://[^\s)]+)\)(?:\s*·\s*\[(RPM|EXE|ZIP)\]\((https://[^\s)]+)\))?\s*\|\s*$', re.M)
     platforms = {'Windows': 'windows', 'macOS': 'macos', 'Linux': 'linux'}
     channels = {name: channel for channel, name in CHANNELS.items()}
     assets = {asset['name'] for asset in release['assets']}
     items = []
-    for channel, platform, arch, url, extra_label, extra_url in pattern.findall(release.get('body') or ''):
+    for channel, platform, arch, primary_label, url, extra_label, extra_url in pattern.findall(release.get('body') or ''):
         item = validate_manifest({'schema_version': 1, 'version': release['tag_name'],
                                   'channel': channels[channel], 'platform': platforms[platform],
                                   'architecture': arch.lower(), 'source': {'url': google_https(url)}}, release['tag_name'])
+        if primary_label in ('EXE', 'ZIP'):
+            if primary_label != {'Windows': 'EXE', 'macOS': 'ZIP', 'Linux': 'DEB'}[platform]:
+                raise ValueError('Native source format does not match platform')
+            item['source']['native_url'] = google_https(url)
         if extra_url:
             if extra_label != {'Windows': 'EXE', 'macOS': 'ZIP', 'Linux': 'RPM'}[platform]:
                 raise ValueError('Alternate source format does not match platform')

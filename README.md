@@ -6,8 +6,8 @@
 
 | 平台 | 架构 | Stable | Extended Stable | 临时下载输入 |
 |---|---|---|---|---|
-| Windows | x86（32 位）、x64、ARM64 | ✓ | ✓ | updater CRX3 内的完整安装 EXE |
-| macOS | x64、ARM64 | ✓ | ✓ | updater 的原始 CRX3 |
+| Windows | x86（32 位）、x64、ARM64 | ✓ | ✓ | 官方原始完整 uncompressed EXE |
+| macOS | x64、ARM64 | ✓ | ✓ | 官方 updater 标准 ZIP |
 | Linux | x64、ARM64 | ✓ | 官方不提供 | 官方 APT 仓库的 `.deb` |
 
 共 12 个平台／架构／通道组合。版本取自各平台、各架构实际的官方响应，可能因发布进度或灰度不同而不一致。Linux 浏览器归档从 DEB 提取；Release 说明另附 YUM 清单中同版本、同架构的官方 RPM 链接，不上传 RPM 附件。
@@ -27,7 +27,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 - tag 使用**纯四段版本号**，例如 `156.0.8078.48`。
 - Release 名称为 `156.0.8078.48 · Stable` 或 `152.0.7977.169 · Extended Stable`。
 - 同一版本出现在两个通道时，共用一个 tag 和 Release，名称为 `版本号 · Stable / Extended Stable`。
-- Release 描述依据已上传的浏览器归档及内部来源元数据，列出通道、平台、架构及对应的 Google 官方原包下载链接（CRX3／DEB，以及匹配版本的 EXE／ZIP／RPM）。
+- Release 描述依据已上传的浏览器归档及内部来源元数据，列出通道、平台、架构及对应的 Google 官方原包下载链接（EXE／ZIP／DEB，以及匹配版本的 RPM）。
 - 已存在且附件齐全的组合直接跳过，不重复下载或重新压缩；新增平台、架构或通道会补充到现有版本。
 - 每次执行先由归档任务查询各平台／架构／通道的当前可获取版本，发布器只按这批版本的并集刷新对应 Release，使用当前代码的模板。已归档、无需下载的组合也会传递查询记录，因此没有新增浏览器附件时仍可刷新描述；不扫描或改写其他历史版本。保留对应版本的来源链接及已有覆盖组合，旧版排版或手工追加说明由当前模板覆盖；相同内容跳过重复写入。
 - 不覆盖已有版本的附件。重试遇到同名不同哈希的附件会报错，避免静默替换已归档的内容。
@@ -41,7 +41,9 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 | macOS | `chrome-macos-arm64-stable-156.0.8078.47-browser.tar.xz`，解压得到完整的 `Google Chrome.app/` 应用包目录 |
 | Linux | `chrome-linux-x64-stable-156.0.8078.47-browser.tar.xz` |
 
-官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows/macOS 保留构建输入 CRX3，并补充同版本、同架构和通道的 Windows `*_chrome_installer_uncompressed.exe` 或 macOS updater ZIP（可获取时）；Linux 为原始 DEB 及匹配版本、架构的 RPM。若 YUM 仓库尚未提供对应版本，则省略 RPM 链接并记录日志，不使用会变化的 `current` 地址。EXE／ZIP 的另一次官方响应也必须版本一致；最新响应不匹配时尝试按归档版本查询，仍无匹配则省略并记录实际返回版本，避免将新旧版本混在一起。
+官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows 直接使用 `*_chrome_installer_uncompressed.exe`，macOS 直接使用包含 `.app` 的 updater ZIP，Linux 使用 DEB 并补充匹配版本和架构的 RPM。Windows／macOS 请求不声明 `acceptformat`，也不回退下载 CRX3；原始 EXE／ZIP 直接按同一份下载清单的版本、大小和 SHA-256 校验。
+
+旧 Release 的 CRX3 来源表仍可读取；优先使用已记录或可恢复的同版本 EXE／ZIP 链接，不覆盖已有浏览器附件。只有旧来源无法恢复匹配原生链接时，保留原有 CRX3 地址作为历史来源，不请求或解包 CRX3。若 YUM 仓库尚未提供对应版本，省略 RPM 链接并记录日志，不使用会变化的 `current` 地址。
 
 每个归档任务还会生成 `*-discovery.json`，记录本次查询到的版本；即使浏览器附件已齐，也上传这份很小的内部记录。发布器复用这些结果，不重新查询一遍归档版本，避免发布进度变化造成版本偏差。仅有本地归档 manifest 时，以该批输入的版本为范围。
 
