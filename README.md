@@ -38,7 +38,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 | 平台 | Release 附件示例 |
 |---|---|
 | Windows | `chrome-windows-x86-stable-156.0.8078.48-browser.7z` |
-| macOS | `chrome-macos-arm64-stable-156.0.8078.47-browser.tar.xz` |
+| macOS | `chrome-macos-arm64-stable-156.0.8078.47-browser.tar.xz`，解压得到完整的 `Google Chrome.app/` 应用包目录 |
 | Linux | `chrome-linux-x64-stable-156.0.8078.47-browser.tar.xz` |
 
 官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows/macOS 保留构建输入 CRX3，并补充同版本、同架构和通道的 Windows `*_chrome_installer_uncompressed.exe` 或 macOS updater ZIP（可获取时）；Linux 为原始 DEB 及匹配版本、架构的 RPM。若 YUM 仓库尚未提供对应版本，则省略 RPM 链接并记录日志，不使用会变化的 `current` 地址。EXE／ZIP 的另一次官方响应也必须版本一致；最新响应不匹配时尝试按归档版本查询，仍无匹配则省略并记录实际返回版本，避免将新旧版本混在一起。
