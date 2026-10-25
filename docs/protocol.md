@@ -101,3 +101,7 @@ query_omaha('windows', 'x64', 'stable', accept_crx3=False, target_version='156.0
 macOS 的无 acceptformat 请求返回 `GoogleChrome-版本.zip`（Extended Stable 带 `-ExtendedStable` 后缀）；它是普通 Chrome 的 updater ZIP，不是 Chrome for Testing ZIP。本轮 macOS x64 Stable 两次查询分别返回 CRX3 `156.0.8078.47`、ZIP `155.0.8059.86`，故不能把该 ZIP 链接放入 `156.0.8078.47` 的来源行。
 
 官方其他分发格式依据：[Windows 企业包内容](https://support.google.com/chrome/a/answer/7650032)、[macOS 下载说明](https://support.google.com/chrome/a/answer/9020580?hl=en)、[macOS PKG 与 DMG](https://cloud.google.com/blog/products/chrome-enterprise/simplifying-chrome-deployments-on-macos)。未对 MSI／DMG／PKG 做历史版本定位，也没有新增原包 Release 附件。
+
+## 历史 Release 描述统一更新
+
+每次发布流程都分页读取全部版本 Release，从已支持的旧／新来源表格式恢复平台、架构、通道及 EXE／ZIP／RPM 链接，使用当前 checkout 中的 `release_text()` 模板重新生成标题和描述。此步骤不依赖是否生成新的 archive artifact；旧版布局及手工追加说明均由当前模板覆盖。生成结果相同时省略重复 PATCH。说明刷新只修改 name／body，不修改 tag、附件、draft 或 prerelease 状态。无法恢复某个已存在浏览器附件的来源时明确失败，避免把已有覆盖组合静默丢掉。兼容旧格式是为了读取来源数据，不是保留旧描述的格式。

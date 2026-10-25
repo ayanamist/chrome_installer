@@ -89,7 +89,7 @@ jobs:
           pattern: chrome-*
           path: dist/
           merge-multiple: true
-      - name: Publish version tags and releases
+      - name: Publish archives and refresh all release descriptions
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/publish_releases.py --input dist

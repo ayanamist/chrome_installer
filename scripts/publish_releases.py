@@ -193,6 +193,36 @@ def publish(repository, target, root):
         log_event('no_new_archives')
 
 
+def refresh_release_descriptions(repository):
+    """Render every historical version with this checkout's current template."""
+    with stage('list_release_descriptions'):
+        pages = gh('api', f'repos/{repository}/releases?per_page=100', '--paginate', '--slurp')
+    checked = updated = 0
+    for release in (release for page in pages for release in page):
+        version = release['tag_name']
+        if not VERSION.fullmatch(version):
+            log_event('release_description_skipped', version=version, reason='not_a_chrome_version_tag')
+            continue
+        with stage('refresh_release_description', version=version):
+            items = existing_release_manifests(release)
+            names = {asset['name'] for asset in release['assets']
+                     if asset['name'].endswith(('-browser.7z', '-browser.tar.xz'))}
+            known = {browser_asset_name(item['platform'], item['architecture'], item['channel'], version)
+                     for item in items}
+            if names - known:
+                raise ValueError(f'Cannot recover source coverage for {version}: {sorted(names - known)}')
+            if not items:
+                log_event('release_description_skipped', version=version, reason='no_browser_archives')
+                continue
+            title, body = release_text(version, add_native_source_links(add_linux_rpm_links(items)))
+            checked += 1
+            if release['name'] != title or release.get('body') != body:
+                gh('api', f'repos/{repository}/releases/{release["id"]}', '--method', 'PATCH', '--input', '-',
+                   data={'name': title, 'body': body})
+                updated += 1
+    log_event('release_descriptions_refreshed', checked=checked, updated=updated)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', type=Path, default=Path('dist'))
@@ -207,6 +237,7 @@ def main():
             print(title + '\n\n' + body)
     else:
         publish(args.repository, args.target, args.input)
+        refresh_release_descriptions(args.repository)
 
 
 if __name__ == '__main__':
