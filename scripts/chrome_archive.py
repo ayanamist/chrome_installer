@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Archive official Chrome payloads without installing or running Chrome."""
 import argparse
-import base64
 from dataclasses import dataclass
 import gzip
 import hashlib
@@ -14,7 +13,6 @@ import shutil
 import stat
 import struct
 import subprocess
-import sys
 import tarfile
 import tempfile
 import urllib.parse
@@ -314,27 +312,12 @@ def compress_tar_xz(source, destination):
                     raise ValueError('tar.xz symlink verification failed')
 
 
-def windows_path(path):
-    if os.name == 'nt':
-        return str(path.resolve())
-    match = re.match(r'^/mnt/([a-z])/(.*)$', str(path.resolve()))
-    if match:
-        return match[1].upper() + ':\\' + match[2].replace('/', '\\')
-    return '\\\\wsl.localhost\\' + os.environ['WSL_DISTRO_NAME'] + str(path.resolve()).replace('/', '\\')
-
-
-def verify_windows_signature(path, version, powershell):
-    literal = windows_path(path).replace("'", "''")
-    code = "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.UTF8Encoding]::new();"
-    code += f"$p='{literal}';$s=Get-AuthenticodeSignature -LiteralPath $p;$f=Get-Item -LiteralPath $p;"
-    code += "@{status=[string]$s.Status;signer=$s.SignerCertificate.Subject;version=$f.VersionInfo.ProductVersion}|ConvertTo-Json -Compress"
-    result = subprocess.run([powershell, '-NoProfile', '-NonInteractive', '-EncodedCommand',
-                             base64.b64encode(code.encode('utf-16le')).decode()],
-                            check=True, capture_output=True, timeout=120)
-    info = json.loads(result.stdout.decode('utf-8-sig'))
-    if info['status'] != 'Valid' or 'O=Google LLC' not in (info['signer'] or '') or info['version'] != version:
-        raise ValueError(f'Installer signature/version verification failed: {info}')
-    return info
+def verify_pe_version(path, version, command):
+    result = subprocess.run([command, 'l', '-slt', str(path)], check=True,
+                            capture_output=True, text=True, encoding='utf-8')
+    match = re.search(r'^ProductVersion:\s*([^\r\n]+)', result.stdout, re.M)
+    if not match or match[1].strip() != version:
+        raise ValueError('PE product version differs from manifest')
 
 
 def validate_binary_arch(path, platform, arch):
@@ -393,14 +376,12 @@ def extract_deb(package, workspace, command):
     return payload / 'opt/google/chrome'
 
 
-def build(offer, package, output, command, powershell=None):
+def build(offer, package, output, command):
     import plistlib
     assets = output / offer.version
     assets.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.chrome-archive-', dir=output.resolve().parent) as directory:
         workspace = Path(directory)
-        signature = None
-        macos_signature = None
         if offer.platform == 'windows':
             validate_crx(package)
             original = workspace / offer.original_name
@@ -410,10 +391,7 @@ def build(offer, package, output, command, powershell=None):
                     raise ValueError('Expected one manifest installer')
                 with archive.open(matches[0]) as source, original.open('wb') as destination:
                     shutil.copyfileobj(source, destination)
-            if powershell:
-                signature = verify_windows_signature(original, offer.version, powershell)
-            else:
-                raise RuntimeError('Windows archives require PowerShell signature verification')
+            verify_pe_version(original, offer.version, command)
             payload = workspace / 'payload'
             seven_zip(command, 'x', original, '-o' + str(payload), '-y')
             browser = payload / 'Chrome-bin'
@@ -432,9 +410,6 @@ def build(offer, package, output, command, powershell=None):
             info = plistlib.loads((browser / 'Contents/Info.plist').read_bytes())
             if info.get('CFBundleShortVersionString') != offer.version:
                 raise ValueError('macOS bundle version differs from manifest')
-            if sys.platform == 'darwin':
-                subprocess.run(['codesign', '--verify', '--deep', '--strict', str(browser)], check=True)
-                macos_signature = 'codesign --verify --deep --strict: passed'
         else:
             original = package
             browser = extract_deb(package, workspace, command)
@@ -457,7 +432,7 @@ def build(offer, package, output, command, powershell=None):
                                'sha256': offer.digest, 'size': offer.size,
                                'original_name': offer.original_name, 'arguments_not_executed': offer.arguments},
                     'original_file_sha256': sha256(original),
-                    'windows_signature': signature, 'macos_signature': macos_signature,
+                    'native_signature_verification': 'not performed; package SHA256 verified against official HTTPS manifest',
                     'binary_architecture_verified': True,
                     'installer_executed': False,
                     'files': [{'name': path.name, 'size': path.stat().st_size, 'sha256': sha256(path)}
@@ -478,7 +453,6 @@ def main():
     parser.add_argument('--output', type=Path, default=Path('dist'))
     parser.add_argument('--cache', type=Path, default=Path('.cache/packages'))
     parser.add_argument('--seven-zip', default='7z' if os.name == 'nt' else '7zz')
-    parser.add_argument('--powershell', default='powershell.exe' if os.name == 'nt' else None)
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'))
     parser.add_argument('--query-only', action='store_true')
     args = parser.parse_args()
@@ -486,8 +460,6 @@ def main():
         parser.error('Google does not offer Extended Stable for Linux')
     if not args.query_only and not shutil.which(args.seven_zip):
         parser.error('7-Zip is required; install it before running this script')
-    if args.platform == 'windows' and not args.query_only and not shutil.which(args.powershell or ''):
-        parser.error('Windows PowerShell is required for signature verification')
     args.output.mkdir(parents=True, exist_ok=True)
     built = []
     channels = ['stable'] if args.platform == 'linux' else list(CHANNELS) if args.channel == 'all' else [args.channel]
@@ -503,7 +475,7 @@ def main():
                 print(f'Already archived: {offer.prefix}', flush=True)
                 continue
         package = download(offer, args.cache)
-        built.extend(build(offer, package, args.output, args.seven_zip, args.powershell))
+        built.extend(build(offer, package, args.output, args.seven_zip))
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
             stream.write(f'has_assets={str(bool(built)).lower()}\n')

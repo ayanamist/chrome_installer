@@ -86,6 +86,13 @@ class SourceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 archive.validate_binary_arch(path, 'linux', 'x64')
 
+    def test_pe_version_is_checked_from_metadata_on_linux(self):
+        import subprocess
+        with patch.object(archive.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, stdout='FileVersion: 156.0.0.1\nProductVersion: 156.0.0.1\n')):
+            archive.verify_pe_version(Path('installer.exe'), '156.0.0.1', '7zz')
+            with self.assertRaisesRegex(ValueError, 'PE product version differs'):
+                archive.verify_pe_version(Path('installer.exe'), '155.0.0.1', '7zz')
+
     def test_app_bundle_link_chains_and_executable_modes_are_preserved(self):
         import stat
         with tempfile.TemporaryDirectory() as directory:

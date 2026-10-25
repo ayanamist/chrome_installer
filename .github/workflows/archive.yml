@@ -25,31 +25,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.13'
-      - run: python -m unittest discover -s tests -v
-
   archive:
-    needs: test
-    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {platform: windows, arch: x64, runner: windows-latest}
-          - {platform: windows, arch: arm64, runner: windows-latest}
-          - {platform: macos, arch: x64, runner: macos-15}
-          - {platform: macos, arch: arm64, runner: macos-15}
-          - {platform: linux, arch: x64, runner: ubuntu-24.04}
-          - {platform: linux, arch: arm64, runner: ubuntu-24.04}
-    runs-on: ${{ matrix.runner }}
+          - {platform: windows, arch: x64}
+          - {platform: windows, arch: arm64}
+          - {platform: macos, arch: x64}
+          - {platform: macos, arch: arm64}
+          - {platform: linux, arch: x64}
+          - {platform: linux, arch: arm64}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -58,14 +45,17 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+      - name: Check archive and release logic
+        run: python -m unittest discover -s tests -v
       - name: Set up 7-Zip
+        if: github.event_name != 'pull_request'
         id: sevenzip
         run: python scripts/setup_7zip.py
       - name: Download, verify and repack official payloads
+        if: github.event_name != 'pull_request'
         id: archive
         env:
           GH_TOKEN: ${{ github.token }}
-          SEVEN_ZIP: ${{ steps.sevenzip.outputs.command }}
         run: >-
           python scripts/chrome_archive.py
           --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
@@ -81,6 +71,7 @@ jobs:
 
   publish:
     needs: archive
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

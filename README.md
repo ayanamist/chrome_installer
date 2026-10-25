@@ -16,7 +16,7 @@
 
 `.github/workflows/archive.yml` 在每天 **04:31（Asia/Singapore，UTC+8）**执行，也支持 Actions 页手动执行。`main` 上脚本、测试或 workflow 的变更会触发执行；Pull Request 只跑测试。
 
-归档任务使用六个 runner 组合。Windows 任务验证 Google LLC Authenticode 签名；macOS 任务验证 app bundle 的代码签名；Linux 使用 Google 官方仓库清单的大小和 SHA-256 校验 DEB。所有平台都会检查实际可执行文件的架构、验证重新封装的归档：Windows 执行 `7z t`，macOS／Linux 逐文件比对 tar.xz 解压内容的 SHA-256 和符号链接。
+六个归档组合统一使用 Ubuntu 24.04 runner，测试作为各归档任务内的一个步骤执行。所有文件均按 Google 官方清单核对大小和 SHA-256；Windows 从 PE 元数据检查版本，macOS 检查 Info.plist 版本。所有平台都会检查实际可执行文件的架构、验证重新封装的归档：Windows 执行 `7z t`，macOS／Linux 逐文件比对 tar.xz 解压内容的 SHA-256 和符号链接。
 
 不需要 Chrome Enterprise token 或个人 PAT。发布任务使用仓库自带的 `GITHUB_TOKEN`，只有发布任务申请 `contents: write`。原始 payload 只保存在 Release 附件中，不提交到 Git。
 
@@ -47,7 +47,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 
 ## 本地使用
 
-需要 Python 3.11+ 和 7-Zip。Windows 归档还需要 Windows PowerShell，签名检查只读取文件。macOS 在本机运行时使用系统 `codesign` 验证签名。不会自动安装本地依赖。
+需要 Python 3.11+ 和 7-Zip；三个目标平台都可以在 Linux 上归档，不依赖 PowerShell、codesign 或目标平台运行环境。归档流程验证官方 HTTPS 清单的哈希，不执行原生 Authenticode／codesign 签名验证。不会自动安装本地依赖。
 
 只查看 Google 返回的版本和下载地址：
 
@@ -64,11 +64,11 @@ python scripts/chrome_archive.py --platform linux --arch x64 --seven-zip 7zz
 python scripts/chrome_archive.py --platform macos --arch arm64 --seven-zip 7zz
 ```
 
-Windows / WSL（WSL 需将 `--seven-zip` 指向已安装的 Linux 7-Zip）：
+Linux / WSL 上归档 Windows：
 
 ```bash
 python scripts/chrome_archive.py --platform windows --arch x64 \
-  --seven-zip 7z --powershell powershell.exe
+  --seven-zip 7zz
 ```
 
 `--channel stable`／`--channel extended` 可单独选择通道。Linux 不接受 `extended`。`--repository OWNER/REPO` 可查询现有 Release，跳过已归档的组合；此参数只进行读取，不发布文件。

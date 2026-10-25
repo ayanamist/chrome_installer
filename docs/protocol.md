@@ -11,8 +11,8 @@
 - 请求 `acceptformat=crx3`，禁用对增量格式的依赖，获取可独立检查的完整包。
 - 只使用 Google HTTPS 地址及 Google HTTPS 重定向。
 - 按服务器清单核对包大小和 SHA-256，检查 CRX3 头部及 ZIP 路径。
-- Windows 从 CRX3 提取清单指定的完整 EXE，验证 Google LLC Authenticode 签名和产品版本；使用 7-Zip 解出嵌入的 `Chrome-bin`，检查对应版本的 chrome.dll 及 chrome.exe 的 PE 架构。
-- macOS 保留 CRX3 原包，按 ZIP 文件模式恢复 `.app`，先写普通文件，再恢复检查过的符号链接；使用 tar.xz 保留权限和符号链接，验证 Info.plist 版本和 Mach-O 支持的架构。原生 macOS runner 额外执行 `codesign --verify --deep --strict`；在非 macOS 上本地验证时不会声称已做原生签名验证。
+- Windows 从 CRX3 提取清单指定的完整 EXE，使用 Linux 7-Zip 读取 PE 产品版本；使用 7-Zip 解出嵌入的 `Chrome-bin`，检查对应版本的 chrome.dll 及 chrome.exe 的 PE 架构。
+- macOS 保留 CRX3 原包，按 ZIP 文件模式恢复 `.app`，先写普通文件，再恢复检查过的符号链接；使用 tar.xz 保留权限和符号链接，验证 Info.plist 版本和 Mach-O 支持的架构。全流程在 Linux runner 执行，不调用原生 macOS 命令。
 - 服务器返回的安装命令参数仅作为证据记录，永不执行。
 
 来源：
@@ -23,7 +23,7 @@
 - [序列化为 release_channel](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/protocol_serializer_json.cc)
 - [Google 对 Extended Stable 平台范围的说明](https://support.google.com/chrome/a/answer/16942104?hl=en)
 
-限制：这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验或 CRX3 publisher proof 验证；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在范围内。
+限制：没有执行 Windows Authenticode 或 macOS codesign 原生签名验证。这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验或 CRX3 publisher proof 验证；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在范围内。
 
 ## Linux
 
@@ -54,4 +54,4 @@ python scripts/chrome_archive.py --platform linux --arch arm64 --query-only
 python scripts/publish_releases.py --input dist --repository OWNER/REPO --preview
 ```
 
-Actions 的时间和默认分支语义依据 [GitHub schedule 文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)，版本 tag 与发布过程依据 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。7-Zip 固定在 26.05，下载官方 portable 版本并核对 GitHub Release asset SHA-256；Windows 使用 runner 预装版本。
+Actions 的时间和默认分支语义依据 [GitHub schedule 文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)，版本 tag 与发布过程依据 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。7-Zip 固定在 26.05，下载官方 portable 版本并核对 GitHub Release asset SHA-256；六个归档组合及发布任务统一使用 Ubuntu 24.04 runner。
