@@ -27,27 +27,30 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 - tag 使用**纯四段版本号**，例如 `156.0.8078.48`。
 - Release 名称为 `156.0.8078.48 · Stable` 或 `152.0.7977.169 · Extended Stable`。
 - 同一版本出现在两个通道时，共用一个 tag 和 Release，名称为 `版本号 · Stable / Extended Stable`。
-- Release 描述依据已上传的浏览器归档及内部来源元数据，列出通道、平台、架构及对应的 Google 官方原包下载链接（EXE／ZIP／DEB，以及匹配版本的 RPM）。
-- 已存在且附件齐全的组合直接跳过，不重复下载或重新压缩；新增平台、架构或通道会补充到现有版本。
+- Release 描述列出通道、平台、架构及 Google 官方原包下载链接（EXE／ZIP／DEB，以及匹配版本的 RPM）。同平台、同架构、相同链接合并为一行，通道标为 `Stable / Extended Stable`；不同来源链接分别保留。
+- 保留两个通道的独立版本查询。同平台、同架构、同版本的原包 SHA-256 和大小一致时复用浏览器归档，不重复下载或重新压缩；不同原包若生成的归档大小和 SHA-256 一致，发布时也只上传一份。
+- 已存在的旧通道附件继续跳过；缺少原包哈希时不凭版本号跨通道复用，必要时构建后比较归档哈希。既有附件不删除或重命名。
 - 每次执行先由归档任务查询各平台／架构／通道的当前可获取版本，发布器只按这批版本的并集刷新对应 Release，使用当前代码的模板。已归档、无需下载的组合也会传递查询记录，因此没有新增浏览器附件时仍可刷新描述；不扫描或改写其他历史版本。保留对应版本的来源链接及已有覆盖组合，旧版排版或手工追加说明由当前模板覆盖；相同内容跳过重复写入。
 - 不覆盖已有版本的附件。重试遇到同名不同哈希的附件会报错，避免静默替换已归档的内容。
 - 新 Release 先作为 draft 创建，全部附件上传成功后才发布。失败的 draft 可由下次执行继续补齐。
 
-每个组合只上传一个浏览器归档：
+新附件名不包含通道，相同内容由两个通道共享：
 
 | 平台 | Release 附件示例 |
 |---|---|
-| Windows | `chrome-windows-x86-stable-156.0.8078.48-browser.7z` |
-| macOS | `chrome-macos-arm64-stable-156.0.8078.47-browser.tar.xz`，解压得到完整的 `Google Chrome.app/` 应用包目录 |
-| Linux | `chrome-linux-x64-stable-156.0.8078.47-browser.tar.xz` |
+| Windows | `chrome-windows-x86-156.0.8078.48-browser.7z` |
+| macOS | `chrome-macos-arm64-156.0.8078.47-browser.tar.xz`，解压得到完整的 `Google Chrome.app/` 应用包目录 |
+| Linux | `chrome-linux-x64-156.0.8078.47-browser.tar.xz` |
+
+若同平台、同架构、同版本的两个原包内容不同，后一个归档名在版本号后增加原包完整 SHA-256，避免覆盖。下载缓存也按原包哈希分目录，允许相同文件名对应不同内容。
 
 官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows 直接使用 `*_chrome_installer_uncompressed.exe`，macOS 直接使用包含 `.app` 的 updater ZIP，Linux 使用 DEB 并补充匹配版本和架构的 RPM。Windows／macOS 请求不声明 `acceptformat`，也不回退下载 CRX3；原始 EXE／ZIP 直接按同一份下载清单的版本、大小和 SHA-256 校验。
 
 旧 Release 的 CRX3 来源表仍可读取；优先使用已记录或可恢复的同版本 EXE／ZIP 链接，不覆盖已有浏览器附件。只有旧来源无法恢复匹配原生链接时，保留原有 CRX3 地址作为历史来源，不请求或解包 CRX3。若 YUM 仓库尚未提供对应版本，省略 RPM 链接并记录日志，不使用会变化的 `current` 地址。
 
-每个归档任务还会生成 `*-discovery.json`，记录本次查询到的版本；即使浏览器附件已齐，也上传这份很小的内部记录。发布器复用这些结果，不重新查询一遍归档版本，避免发布进度变化造成版本偏差。仅有本地归档 manifest 时，以该批输入的版本为范围。
+每个归档任务还会生成 `*-discovery.json`，记录本次查询到的版本及复用附件的通道映射；即使浏览器附件已齐，也上传这份很小的内部记录。发布器复用这些结果，不重新查询一遍归档版本，避免发布进度变化造成版本偏差。仅有本地归档 manifest 时，以该批输入的版本为范围。
 
-manifest 和 discovery 记录只作为工作流内部中间数据，用于校验归档及生成 Release 说明，不作为 Release 附件；不上传原始 EXE、EXE 的 XZ、CRX3、DEB、JSON 或 SHA256SUMS。后续增量发布从现有 Release 的来源表恢复已覆盖组合及已记录的 EXE／ZIP／RPM 链接，无需保留公开的元数据文件。来源表并非 Google 所有安装分发格式的目录：没有列举 Windows MSI／Enterprise Bundle、macOS DMG／PKG 或 Chrome for Testing。
+manifest 和 discovery 文件只作为工作流内部中间数据，不作为 Release 附件；不上传原始 EXE、EXE 的 XZ、CRX3、DEB、JSON 或 SHA256SUMS。新描述的隐藏 HTML 注释保留精简的公开来源记录：平台、架构、通道、版本、来源 URL、已知原包大小／SHA-256 及附件名，用于后续恢复共享关系；旧描述继续从来源表恢复。来源表并非 Google 所有安装分发格式的目录：没有列举 Windows MSI／Enterprise Bundle、macOS DMG／PKG 或 Chrome for Testing。
 
 归档内的浏览器目录分别是 Windows 的 `Chrome-bin`、macOS 的 `Google Chrome.app`、Linux 的 `chrome`。保留文件内容、可执行权限和符号链接，不重签名、不移除本地化文件。Linux 依赖库和系统集成仍需使用者的系统提供。
 
@@ -55,19 +58,19 @@ manifest 和 discovery 记录只作为工作流内部中间数据，用于校验
 
 提供 Windows 的 PowerShell 脚本和 macOS／Linux 的 Bash 脚本。针对已通过 Chrome 企业云管理注册、但持久 DM token 丢失而导致策略扩展每次启动被卸载再安装的场景，脚本从最近的本机机器级云策略缓存恢复 token。没有此类云策略的普通使用场景无需运行。
 
-新构建的归档在上述浏览器目录旁附带 `chrome-dm-token/`，包含对应平台脚本及使用说明；macOS `.app` 内不添加文件。已有 Release 附件保持原样，可直接使用仓库的 [恢复脚本和操作步骤](scripts/chrome-dm-token/README.md)。
+恢复工具作为仓库中的独立脚本提供，不打入浏览器归档。需要时从 [scripts/chrome-dm-token/](scripts/chrome-dm-token/README.md) 获取对应平台脚本及使用说明。
 
-先在 `chrome://policy` 重新加载策略，然后正常完全退出 Chrome。在解压目录执行：
+先在 `chrome://policy` 重新加载策略，然后正常完全退出 Chrome。从仓库根目录执行：
 
 ```powershell
 # Windows：管理员 PowerShell；默认使用当前用户的 Chrome User Data。
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\chrome-dm-token\fix-dm-token.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\chrome-dm-token\fix-dm-token.ps1
 # 自定义目录：在上面命令末尾加 -UserDataDir 'D:\Chrome User Data'
 ```
 
 ```bash
 # macOS / Linux：使用 Chrome 的同一用户，不要 sudo。
-bash ./chrome-dm-token/fix-dm-token.sh
+bash ./scripts/chrome-dm-token/fix-dm-token.sh
 # 自定义目录：加 --user-data-dir '/path/to/Chrome User Data'
 ```
 

@@ -4,37 +4,29 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import urllib.parse
 
-from chrome_archive import CHANNELS, VERSION, browser_asset_name, get_release, gh, google_https, query_omaha, sha256, validate_target
+from chrome_archive import get_release, gh, query_omaha, sha256
+from release_metadata import (CHANNELS, VERSION, existing_release_manifests,
+                              google_https, manifest_asset_name, metadata_comment, validate_manifest)
 from archive_logging import log_context, log_event, log_runtime, stage
 from linux_sources import rpm_sources
 
 
-def validate_manifest(value, version):
-    if value.get('schema_version') != 1 or value.get('version') != version or not VERSION.fullmatch(version):
-        raise ValueError('Invalid archive manifest version')
-    validate_target(value.get('platform'), value.get('architecture'))
-    if value.get('channel') not in CHANNELS:
-        raise ValueError('Invalid channel')
-    if value['platform'] == 'linux' and value['channel'] != 'stable':
-        raise ValueError('Linux Extended Stable is unsupported')
-    return value
-
-
 def release_text(version, manifests):
-    entries = {(item['channel'], item['platform'], item['architecture']): item for item in manifests}
-    rows = sorted(entries)
-    channels = [CHANNELS[channel] for channel in CHANNELS if any(row[0] == channel for row in rows)]
+    # Keep every existing attachment's provenance even when a channel gains a shared alias.
+    records = {(item['channel'], item['platform'], item['architecture'], manifest_asset_name(item)): item
+               for item in manifests}
+    channels = [CHANNELS[channel] for channel in CHANNELS if any(row[0] == channel for row in records)]
     title = version + ' · ' + ' / '.join(channels)
     body = f'# Chrome {version}\n\n'
     body += 'Official Google download payloads, archived without executing an installer.\n\n'
     body += '| Channel | Platform | Architecture | Official original download |\n|---|---|---|---|\n'
     legacy_sources = False
-    for channel, platform, arch in rows:
-        source = entries[(channel, platform, arch)].get('source', {})
+    downloads = {}
+    for (channel, platform, arch, _), item in sorted(records.items()):
+        source = item.get('source', {})
         url = source.get('url') if platform == 'linux' else source.get('native_url') or source.get('url')
         suffix = urllib.parse.urlsplit(url).path.lower().rsplit('.', 1)[-1] if url else ''
         label = {'exe': 'EXE', 'zip': 'ZIP', 'deb': 'DEB', 'crx3': 'CRX3'}.get(suffix, 'Google original')
@@ -42,7 +34,10 @@ def release_text(version, manifests):
         link = f'[{label}]({google_https(url)})' if url else '—'
         if platform == 'linux' and source.get('rpm_url'):
             link += f' · [RPM]({google_https(source["rpm_url"])})'
-        body += f'| {CHANNELS[channel]} | {dict(windows="Windows", macos="macOS", linux="Linux")[platform]} | {arch.upper()} | {link} |\n'
+        downloads.setdefault((platform, arch, link), set()).add(channel)
+    for (platform, arch, link), coverage in sorted(downloads.items()):
+        names = ' / '.join(CHANNELS[channel] for channel in CHANNELS if channel in coverage)
+        body += f'| {names} | {dict(windows="Windows", macos="macOS", linux="Linux")[platform]} | {arch.upper()} | {link} |\n'
     body += '\n## Assets\n\n'
     body += '- `chrome-windows-*-browser.7z`: extracted Windows browser files, with `Chrome-bin/` as the archive root.\n'
     body += '- `chrome-macos-*-browser.tar.xz`: the complete `Google Chrome.app/` application bundle, preserving file contents, Unix modes and symbolic links. Extract the archive to obtain the `.app` directory.\n'
@@ -51,9 +46,11 @@ def release_text(version, manifests):
     body += '- EXE/ZIP links point directly to official packages for the archived version. MSI, DMG, PKG and Enterprise bundles are not enumerated here.\n'
     if legacy_sources:
         body += '- Legacy CRX3 links are retained where no matching EXE/ZIP source was recovered for an older archive.\n'
-    body += '- Asset prefixes identify platform, architecture and channel.\n'
+    body += '- New asset names identify platform, architecture and version; identical archives are shared across channels. A SHA-256 suffix distinguishes different payloads for the same version. Legacy names may include a channel.\n'
     body += '- Only the repacked browser archives are release attachments; original files and workflow metadata are not uploaded as release assets.\n\n'
     body += 'Linux has no official Extended Stable channel. Extracted archives do not install dependencies or updater integration.\n'
+    if any('browser_asset' in item or item.get('source', {}).get('sha256') for item in records.values()):
+        body += '\n' + metadata_comment([records[key] for key in sorted(records)])
     return title, body
 
 
@@ -123,7 +120,7 @@ def local_groups(root):
     groups = {}
     for path in root.glob('*/*-manifest.json'):
         item = validate_manifest(json.loads(path.read_text(encoding='utf-8')), path.parent.name)
-        expected = browser_asset_name(item['platform'], item['architecture'], item['channel'], item['version'])
+        expected = manifest_asset_name(item)
         entries = [entry for entry in item['files'] if entry['name'] == expected]
         if len(entries) != 1:
             raise ValueError(f'Expected one repacked browser archive in {path}')
@@ -136,31 +133,49 @@ def local_groups(root):
         group = groups.setdefault(item['version'], {'manifests': [], 'assets': {}})
         group['manifests'].append(item)
         group['assets'][file.name] = file
+    for path in root.glob('*-discovery.json'):
+        discovery = json.loads(path.read_text(encoding='utf-8'))
+        for item in discovery.get('manifests', []):
+            validate_manifest(item, item['version'])
+            if (item['platform'] != discovery['platform'] or item['architecture'] != discovery['architecture']
+                    or discovery['channels'].get(item['channel']) != item['version']):
+                raise ValueError(f'Reused archive does not match discovery: {path}')
+            group = groups.setdefault(item['version'], {'manifests': [], 'assets': {}})
+            group['manifests'].append(item)
     return groups
 
 
-def existing_release_manifests(release):
-    """The published table retains provenance; no metadata release assets needed."""
-    pattern = re.compile(r'^\|\s*(Stable|Extended Stable)\s*\|\s*(Windows|macOS|Linux)\s*\|\s*(X86|X64|ARM64)\s*\|\s*\[(Google original|CRX3|EXE|ZIP|DEB)\]\((https://[^\s)]+)\)(?:\s*·\s*\[(RPM|EXE|ZIP)\]\((https://[^\s)]+)\))?\s*\|\s*$', re.M)
-    platforms = {'Windows': 'windows', 'macOS': 'macos', 'Linux': 'linux'}
-    channels = {name: channel for channel, name in CHANNELS.items()}
-    assets = {asset['name'] for asset in release['assets']}
-    items = []
-    for channel, platform, arch, primary_label, url, extra_label, extra_url in pattern.findall(release.get('body') or ''):
-        item = validate_manifest({'schema_version': 1, 'version': release['tag_name'],
-                                  'channel': channels[channel], 'platform': platforms[platform],
-                                  'architecture': arch.lower(), 'source': {'url': google_https(url)}}, release['tag_name'])
-        if primary_label in ('EXE', 'ZIP'):
-            if primary_label != {'Windows': 'EXE', 'macOS': 'ZIP', 'Linux': 'DEB'}[platform]:
-                raise ValueError('Native source format does not match platform')
-            item['source']['native_url'] = google_https(url)
-        if extra_url:
-            if extra_label != {'Windows': 'EXE', 'macOS': 'ZIP', 'Linux': 'RPM'}[platform]:
-                raise ValueError('Alternate source format does not match platform')
-            item['source']['rpm_url' if platform == 'Linux' else 'native_url'] = google_https(extra_url)
-        if browser_asset_name(item['platform'], item['architecture'], item['channel'], item['version']) in assets:
-            items.append(item)
-    return items
+def deduplicate_assets(group, existing_manifests, release):
+    """Share only archives with matching size/digest within one platform/arch."""
+    remote = {asset['name']: asset for asset in release['assets']} if release else {}
+    candidates = {}
+    for item in existing_manifests:
+        asset = remote[manifest_asset_name(item)]
+        if asset.get('digest') and asset.get('size'):
+            candidates[(item['platform'], item['architecture'], asset['size'], asset['digest'])] = asset['name']
+    uploads = {}
+    mappings = {}
+    for name, path in group['assets'].items():
+        size, digest = path.stat().st_size, 'sha256:' + sha256(path)
+        if name in remote:
+            if remote[name].get('size') != size or remote[name].get('digest') != digest:
+                raise ValueError(f'Existing immutable asset differs: {name}')
+        items = [item for item in group['manifests'] if manifest_asset_name(item) == name]
+        if not items:
+            raise ValueError(f'Browser archive has no provenance: {name}')
+        target = (items[0]['platform'], items[0]['architecture'], size, digest)
+        selected = candidates.get(target, name)
+        candidates[target] = selected
+        mappings[name] = selected
+        if selected == name:
+            uploads[name] = path
+    manifests = [dict(item, browser_asset=mappings.get(manifest_asset_name(item), manifest_asset_name(item)))
+                 for item in group['manifests']]
+    available = set(remote) | set(uploads)
+    for item in manifests:
+        if manifest_asset_name(item) not in available:
+            raise ValueError(f'Reused browser archive is missing: {manifest_asset_name(item)}')
+    return {'manifests': manifests, 'assets': uploads}
 
 
 def discovered_versions(root):
@@ -191,6 +206,7 @@ def publish(repository, target, root):
         with stage('read_existing_release', version=version):
             release = get_release(repository, version)
         existing_manifests = existing_release_manifests(release) if release else []
+        group = deduplicate_assets(group, existing_manifests, release)
         manifests = add_native_source_links(add_linux_rpm_links([*existing_manifests, *group['manifests']]))
         title, body = release_text(version, manifests)
         if not release:
@@ -199,8 +215,7 @@ def publish(repository, target, root):
                                'body': body,
                                'draft': True, 'prerelease': False})
         assets = {asset['name']: asset for asset in release['assets']}
-        known = {browser_asset_name(item['platform'], item['architecture'], item['channel'], item['version'])
-                 for item in [*existing_manifests, *group['manifests']]}
+        known = {manifest_asset_name(item) for item in [*existing_manifests, *group['manifests']]}
         unknown = {name for name in assets if name.endswith(('-browser.7z', '-browser.tar.xz'))} - known
         if unknown:
             raise ValueError(f'Existing browser archives have no provenance in the release description: {sorted(unknown)}')
@@ -215,9 +230,11 @@ def publish(repository, target, root):
             with stage('upload_release_archive', version=version, file=path.name, input_bytes=path.stat().st_size):
                 subprocess.run(['gh', 'release', 'upload', version, str(path), '--repo', repository], check=True)
         # Update name/coverage and publish only after all local assets uploaded.
-        with stage('publish_release', version=version):
-            gh('api', f'repos/{repository}/releases/{release["id"]}', '--method', 'PATCH', '--input', '-',
-               data={'name': title, 'body': body, 'draft': False, 'prerelease': False, 'make_latest': 'false'})
+        if (release.get('name') != title or release.get('body') != body
+                or release.get('draft') or release.get('prerelease')):
+            with stage('publish_release', version=version):
+                gh('api', f'repos/{repository}/releases/{release["id"]}', '--method', 'PATCH', '--input', '-',
+                   data={'name': title, 'body': body, 'draft': False, 'prerelease': False, 'make_latest': 'false'})
         log_event('release_published', version=version, title=title, uploaded_archive_count=len(group['assets']))
     if not groups:
         log_event('no_new_archives')
@@ -238,8 +255,7 @@ def refresh_release_descriptions(repository, versions):
             items = existing_release_manifests(release)
             names = {asset['name'] for asset in release['assets']
                      if asset['name'].endswith(('-browser.7z', '-browser.tar.xz'))}
-            known = {browser_asset_name(item['platform'], item['architecture'], item['channel'], version)
-                     for item in items}
+            known = {manifest_asset_name(item) for item in items}
             if names - known:
                 raise ValueError(f'Cannot recover source coverage for {version}: {sorted(names - known)}')
             if not items:

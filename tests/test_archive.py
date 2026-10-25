@@ -34,7 +34,7 @@ class SourceTests(unittest.TestCase):
                             '--channel', 'stable', '--output', str(root / 'dist'), '--repository', 'owner/repo']), \
                  patch.object(archive.shutil, 'which', return_value='/existing/7zz'), \
                  patch.object(archive, 'query_omaha', return_value=item), \
-                 patch.object(archive, 'get_release', return_value={'assets': [{'name': item.browser_asset}]}), \
+                 patch.object(archive, 'get_release', return_value={'assets': [{'name': archive.browser_asset_name(item.platform, item.arch, item.channel, item.version)}]}), \
                  patch.object(archive, 'download') as download, patch.object(archive, 'build') as build, \
                  patch.object(archive, 'log_runtime'), patch.dict(os.environ, {'GITHUB_OUTPUT': str(output)}):
                 archive.main()
@@ -96,7 +96,7 @@ class SourceTests(unittest.TestCase):
                 self.assertEqual(request['app'][0]['ap'], '-arch_x86')
                 self.assertEqual(request['app'][0]['release_channel'], channel)
                 self.assertEqual(result.arch, 'x86')
-                self.assertIn('windows-x86-' + channel, result.browser_asset)
+                self.assertEqual(result.browser_asset, 'chrome-windows-x86-156.0.0.1-browser.7z')
 
     def test_x86_binary_is_checked_as_i386_without_execution(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -142,38 +142,36 @@ class SourceTests(unittest.TestCase):
                 self.assertTrue(result.getmember('Chrome.app/Current').issym())
                 self.assertEqual(result.getmember('Chrome.app/Current').linkname, 'binary')
 
-    def test_repair_helpers_are_packaged_beside_unmodified_app(self):
+    def test_tar_archive_contains_only_browser_directory(self):
         import tarfile
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             app = root / 'Google Chrome.app'
             app.mkdir()
             (app / 'signed-content').write_bytes(b'unchanged app contents')
-            repair = archive.stage_token_repair('macos', root)
-            self.assertEqual(sorted(p.name for p in repair.iterdir()), ['README.md', 'fix-dm-token.sh'])
-            archive.compress_tar_xz(app, root / 'browser.tar.xz', extras=(repair,))
+            repair = root / 'chrome-dm-token'
+            repair.mkdir()
+            (repair / 'fix-dm-token.sh').write_text('unrelated helper')
+            archive.compress_tar_xz(app, root / 'browser.tar.xz')
             with tarfile.open(root / 'browser.tar.xz') as result:
                 self.assertEqual(result.extractfile('Google Chrome.app/signed-content').read(), b'unchanged app contents')
-                self.assertEqual(result.extractfile('chrome-dm-token/fix-dm-token.sh').read(),
-                                 (repair / 'fix-dm-token.sh').read_bytes())
-                self.assertEqual(result.getmember('chrome-dm-token/fix-dm-token.sh').mode, 0o755)
-                self.assertFalse(any(name.startswith('Google Chrome.app/chrome-dm-token') for name in result.getnames()))
+                self.assertEqual(set(result.getnames()), {'Google Chrome.app', 'Google Chrome.app/signed-content'})
 
-    def test_windows_compression_includes_repair_directory(self):
+    def test_windows_compression_contains_only_browser_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             browser = root / 'Chrome-bin'
             browser.mkdir()
-            repair = archive.stage_token_repair('windows', root)
+            (root / 'chrome-dm-token').mkdir()
             destination = root / 'browser.7z'
             def sevenzip(command, action, *args, **kwargs):
                 if action == 'a':
-                    self.assertIn('Chrome-bin', args)
-                    self.assertIn('chrome-dm-token', args)
+                    self.assertEqual(args[-2:], (destination.resolve(), 'Chrome-bin'))
+                    self.assertNotIn('chrome-dm-token', args)
                     self.assertEqual(kwargs['cwd'], root)
                     destination.write_bytes(b'fixture archive')
             with patch.object(archive, 'seven_zip', side_effect=sevenzip) as run:
-                archive.compress('7zz', browser, destination, extras=(repair,))
+                archive.compress('7zz', browser, destination)
             self.assertEqual(run.call_args_list[-1].args[1], 't')
 
     def test_rejects_unsafe_origins_and_names(self):
@@ -239,9 +237,8 @@ class SourceTests(unittest.TestCase):
                 header[0x40:0x44] = b'PE\0\0'
                 struct.pack_into('<H', header, 0x44, 0x8664)
                 (browser / 'chrome.exe').write_bytes(header)
-            def compress(command, source, destination, extras=()):
-                self.assertEqual([path.name for path in extras], ['chrome-dm-token'])
-                self.assertTrue((extras[0] / 'fix-dm-token.ps1').is_file())
+            def compress(command, source, destination):
+                self.assertEqual(source.name, 'Chrome-bin')
                 destination.write_bytes(b'verified browser archive fixture')
             with patch.object(archive, 'verify_pe_version') as verify, \
                  patch.object(archive, 'seven_zip', side_effect=extract), patch.object(archive, 'compress', side_effect=compress):
@@ -291,7 +288,9 @@ class SourceTests(unittest.TestCase):
     def test_cached_download_is_rehashed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'payload.crx3').write_bytes(b'wrong data')
+            cache = root / offer().digest
+            cache.mkdir()
+            (cache / 'payload.crx3').write_bytes(b'wrong data')
             with self.assertRaisesRegex(ValueError, 'Cached package fails'):
                 archive.download(offer(), root)
 
@@ -523,9 +522,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_publish_upload_failure_keeps_draft(self):
         with tempfile.TemporaryDirectory() as directory:
-            asset = Path(directory) / 'asset.7z'
+            asset = Path(directory) / archive.browser_asset_name('windows', 'x64', None, '156.0.0.1')
             asset.write_bytes(b'data')
-            group = {'156.0.0.1': {'manifests': self.manifests(), 'assets': {'asset.7z': asset}}}
+            group = {'156.0.0.1': {'manifests': self.shared_manifests(asset.name), 'assets': {asset.name: asset}}}
             with patch.object(publish, 'local_groups', return_value=group), patch.object(publish, 'get_release', return_value=None), patch.object(publish, 'gh', return_value={'id': 1, 'assets': []}) as api, patch.object(publish.subprocess, 'run', side_effect=RuntimeError('upload failed')):
                 with self.assertRaises(RuntimeError):
                     publish.publish('owner/repo', 'commit', Path(directory))
@@ -534,9 +533,9 @@ class ReleaseTests(unittest.TestCase):
 
     def test_retry_keeps_existing_assets_and_publishes_after_uploads(self):
         with tempfile.TemporaryDirectory() as directory:
-            asset = Path(directory) / 'asset.7z'
+            asset = Path(directory) / archive.browser_asset_name('windows', 'x64', None, '156.0.0.1')
             asset.write_bytes(b'data')
-            group = {'156.0.0.1': {'manifests': self.manifests(), 'assets': {'asset.7z': asset}}}
+            group = {'156.0.0.1': {'manifests': self.shared_manifests(asset.name), 'assets': {asset.name: asset}}}
             release = {'id': 1, 'assets': [{'name': asset.name, 'size': 4, 'digest': 'sha256:' + archive.sha256(asset)}]}
             with patch.object(publish, 'local_groups', return_value=group), patch.object(publish, 'get_release', return_value=release), patch.object(publish, 'gh') as api, patch.object(publish.subprocess, 'run') as commands:
                 publish.publish('owner/repo', 'commit', Path(directory))
@@ -546,14 +545,19 @@ class ReleaseTests(unittest.TestCase):
 
     def test_existing_assets_never_silently_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
-            asset = Path(directory) / 'asset.7z'
+            asset = Path(directory) / archive.browser_asset_name('windows', 'x64', None, '156.0.0.1')
             asset.write_bytes(b'data')
-            group = {'156.0.0.1': {'manifests': self.manifests(), 'assets': {'asset.7z': asset}}}
+            group = {'156.0.0.1': {'manifests': self.shared_manifests(asset.name), 'assets': {asset.name: asset}}}
             release = {'id': 1, 'assets': [{'name': asset.name, 'size': 4, 'digest': 'sha256:' + '0' * 64}]}
             with patch.object(publish, 'local_groups', return_value=group), patch.object(publish, 'get_release', return_value=release), patch.object(publish, 'gh') as api:
                 with self.assertRaisesRegex(ValueError, 'Existing immutable asset differs'):
                     publish.publish('owner/repo', 'commit', Path(directory))
                 api.assert_not_called()
+
+    def shared_manifests(self, name):
+        return [dict(schema_version=1, version='156.0.0.1', channel=channel,
+                     platform='windows', architecture='x64', browser_asset=name,
+                     source={'url': 'https://dl.google.com/browser.exe'}) for channel in archive.CHANNELS]
 
 
 if __name__ == '__main__':

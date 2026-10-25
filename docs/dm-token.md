@@ -1,6 +1,6 @@
 # 解压版 Chrome 的 DM token 恢复约定
 
-范围及日期：2026-10-25，普通 Google Chrome 的 Windows x86／x64／ARM64、macOS x64／ARM64、Linux x64／ARM64 解压使用场景。脚本接口与缓存字段依据 Chromium `157.0.8089.0`。实现包括单文件恢复脚本、缓存解析测试及归档接入。
+范围及日期：2026-10-25，普通 Google Chrome 的 Windows x86／x64／ARM64、macOS x64／ARM64、Linux x64／ARM64 解压使用场景。脚本接口与缓存字段依据 Chromium `157.0.8089.0`。实现包括独立的单文件恢复脚本及缓存解析测试，不接入浏览器归档。
 
 关键词：CBCM、DM token、机器级云策略、扩展重装、解压版、PowerShell、Bash、Enrollment、MachineGuid、machine-id、IOPlatformSerialNumber。
 
@@ -19,7 +19,7 @@ Windows 的保存任务通过 updater app command 调用 installer。纯解压�
 
 ## 脚本和路径合同
 
-入口为 [`fix-dm-token.ps1`](../scripts/chrome-dm-token/fix-dm-token.ps1) 和 [`fix-dm-token.sh`](../scripts/chrome-dm-token/fix-dm-token.sh)。Windows 提供单一恢复操作，参数 `-UserDataDir`；Bash 参数 `--user-data-dir`。Bash 使用系统 OpenSSL 计算 Chromium 兼容的 SHA-1 和 base64url，不依赖 Go、Python 或 protobuf 包。完整操作步骤及依赖见 [随包说明](../scripts/chrome-dm-token/README.md)。
+入口为 [`fix-dm-token.ps1`](../scripts/chrome-dm-token/fix-dm-token.ps1) 和 [`fix-dm-token.sh`](../scripts/chrome-dm-token/fix-dm-token.sh)。Windows 提供单一恢复操作，参数 `-UserDataDir`；Bash 参数 `--user-data-dir`。Bash 使用系统 OpenSSL 计算 Chromium 兼容的 SHA-1 和 base64url，不依赖 Go、Python 或 protobuf 包。完整操作步骤及依赖见 [脚本使用说明](../scripts/chrome-dm-token/README.md)。
 
 | 平台 | client ID | 读取及补写位置 |
 |---|---|---|
@@ -49,17 +49,17 @@ Windows 默认缓存根目录为当前用户 `%LOCALAPPDATA%\Google\Chrome\User 
 
 字段依据：[device_management_backend.proto](https://raw.githubusercontent.com/chromium/chromium/157.0.8089.0/components/policy/proto/device_management_backend.proto)。
 
-## 归档分发
+## 独立分发
 
-新构建的每个浏览器归档增加同级 `chrome-dm-token/`，其中只有对应平台的脚本和 README。Windows 使用 PowerShell，macOS／Linux 使用同一份 Bash。浏览器原目录名和内部内容保持原样，尤其不在已签名的 macOS `.app` 内写辅助文件。
+根据 2026-10-25 确认的范围，恢复工具仅在仓库 `scripts/chrome-dm-token/` 独立提供，Windows 使用 PowerShell，macOS／Linux 使用同一份 Bash。使用者按需单独获取并执行，浏览器归档只包含提取的浏览器目录。
 
-`stage_token_repair()` 在临时解包目录准备文件；7z 压缩命令包含浏览器和辅助目录，仍执行完整 `7z t`；tar.xz 压缩及 SHA-256 回读校验包含两者，保留 Bash 执行权限。归档过程不执行修复脚本，也不读取构建机的 Chrome 注册状态。旧版附件不覆盖，Release 模板提供仓库脚本链接并明确旧附件可能没有辅助目录。
+归档流程不复制或执行恢复脚本，不读取构建机的 Chrome 注册状态。Windows 7z 输入仅为 `Chrome-bin/`，macOS tar.xz 输入仅为 `Google Chrome.app/`，Linux tar.xz 输入仅为 `chrome/`；不增加辅助脚本目录。
 
 ## 验证和边界
 
 2026-10-25 本地验证：
 
-- Python 全量测试包含 Windows 打包参数、macOS tar.xz 实际回读和 `.app` 内容不变检查。
+- Python 归档测试检查 Windows 压缩只传入浏览器目录、macOS tar.xz 实际回读只包含 `.app` 及其原有内容，即使旁边存在恢复工具目录也不打入。
 - Linux 使用真实脚本入口、本机 ID 和临时 User Data 写入合成 token；缓存解析及落盘为真实执行，未读写实际 Chrome profile。
 - Bash 分别模拟 Linux machine-id 和 macOS 序列号，检查实际哈希／protobuf 解析、默认路径、自定义目录、权限、重复执行保留原文件，以及错误设备、状态、时间、token、截断、重复字段和溢出的拒绝行为。macOS 分支本地是在 Linux 上执行的模拟，不能当作真实 macOS 运行证明。
 - 使用已安装的 Windows PowerShell 5.1 执行合成 protobuf 解析测试，通过；只 dot-source 函数，不执行真实注册表写入。

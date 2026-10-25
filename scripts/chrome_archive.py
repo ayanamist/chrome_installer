@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Archive official Chrome payloads without installing or running Chrome."""
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import gzip
 import hashlib
 import json
@@ -21,25 +21,13 @@ import uuid
 import zipfile
 
 from archive_logging import log_context, log_event, log_runtime, path_bytes, stage
+from release_metadata import (CHANNELS, ARCHITECTURES, VERSION, browser_asset_name, compact_manifest,
+                              existing_release_manifests, google_https, manifest_asset_name, validate_target)
 
 ENDPOINT = 'https://update.googleapis.com/service/update2/json'
 DEB_ROOT = 'https://dl.google.com/linux/chrome/deb/'
 UPDATER_VERSION = '157.0.8089.0'
-CHANNELS = {'stable': 'Stable', 'extended': 'Extended Stable'}
-ARCHITECTURES = {'windows': ('x86', 'x64', 'arm64'),
-                 'macos': ('x64', 'arm64'), 'linux': ('x64', 'arm64')}
-VERSION = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
 DOWNLOAD_PROGRESS_SECONDS = 15
-
-
-def validate_target(platform, arch):
-    if platform not in ARCHITECTURES or arch not in ARCHITECTURES[platform]:
-        raise ValueError(f'Unsupported target: {platform}/{arch}')
-
-
-def browser_asset_name(platform, arch, channel, version):
-    suffix = '.7z' if platform == 'windows' else '.tar.xz'
-    return f'chrome-{platform}-{arch}-{channel}-{version}-browser{suffix}'
 
 
 def write_json(path, value):
@@ -55,15 +43,6 @@ def safe_name(value):
     if not value or PurePosixPath(value).name != value or PureWindowsPath(value).name != value or ':' in value or value in ('.', '..'):
         raise ValueError(f'Unsafe filename: {value!r}')
     return value
-
-
-def google_https(url):
-    parsed = urllib.parse.urlsplit(url)
-    host = parsed.hostname or ''
-    if parsed.scheme != 'https' or parsed.username or parsed.password or not (
-        host == 'google.com' or host.endswith('.google.com') or host.endswith('.gvt1.com')):
-        raise ValueError(f'Unexpected download origin: {url}')
-    return url
 
 
 class GoogleRedirects(urllib.request.HTTPRedirectHandler):
@@ -101,6 +80,7 @@ class Offer:
     urls: tuple
     original_name: str
     arguments: str = ''
+    archive_name: str = ''
 
     def __post_init__(self):
         validate_target(self.platform, self.arch)
@@ -119,7 +99,7 @@ class Offer:
 
     @property
     def browser_asset(self):
-        return browser_asset_name(self.platform, self.arch, self.channel, self.version)
+        return self.archive_name or browser_asset_name(self.platform, self.arch, None, self.version)
 
     @property
     def manifest_name(self):
@@ -206,6 +186,7 @@ def query_linux(arch):
 
 
 def download(offer, cache):
+    cache = cache / offer.digest
     cache.mkdir(parents=True, exist_ok=True)
     destination = cache / offer.package_name
     if destination.exists():
@@ -467,6 +448,7 @@ def build(offer, package, output, command):
             browser_hash = sha256(browser_target)
         metadata = {'schema_version': 1, 'version': offer.version,
                     'channel': offer.channel, 'channel_name': CHANNELS[offer.channel],
+                    'browser_asset': browser_target.name,
                     'platform': offer.platform, 'architecture': offer.arch,
                     'source': {'url': offer.urls[0], 'package': offer.package_name,
                                'format': {'windows': 'EXE', 'macos': 'ZIP', 'linux': 'DEB'}[offer.platform],
@@ -508,6 +490,10 @@ def main():
     log_runtime(seven_zip=args.seven_zip, xz_preset=6, seven_zip_level=5, seven_zip_threads=2)
     built = []
     discovered = {}
+    reused = []
+    releases = {}
+    available = []
+    reserved = set()
     channels = ['stable'] if args.platform == 'linux' else list(CHANNELS) if args.channel == 'all' else [args.channel]
     for channel in channels:
         with log_context(platform=args.platform, architecture=args.arch, channel=channel):
@@ -521,15 +507,49 @@ def main():
                 with stage('channel_total'):
                     if args.repository:
                         with stage('check_existing_release'):
-                            release = get_release(args.repository, offer.version)
+                            if offer.version not in releases:
+                                releases[offer.version] = get_release(args.repository, offer.version)
+                            release = releases[offer.version]
                         names = {asset['name'] for asset in release['assets']} if release else set()
-                        if not (set(offer.asset_names) - names):
-                            log_event('already_archived', file=offer.browser_asset)
-                            continue
+                        reserved.update(names)
+                        records = existing_release_manifests(release) if release and release.get('tag_name') else []
+                    else:
+                        names, records = set(), []
+                    matching = next((item for item in [*available, *records]
+                                     if item['platform'] == offer.platform and item['architecture'] == offer.arch
+                                     and item['version'] == offer.version
+                                     and item.get('source', {}).get('sha256') == offer.digest
+                                     and item['source'].get('size') == offer.size), None)
+                    if matching:
+                        item = compact_manifest(matching)
+                        item.update(channel=channel, source={'url': offer.urls[0], 'sha256': offer.digest, 'size': offer.size})
+                        reused.append(item)
+                        log_event('reuse_browser_archive', file=item['browser_asset'], source_sha256=offer.digest)
+                        continue
+                    archived = next((item for item in records
+                                     if item['platform'] == offer.platform and item['architecture'] == offer.arch
+                                     and item['version'] == offer.version and item['channel'] == channel), None)
+                    if archived:
+                        log_event('already_archived', file=manifest_asset_name(archived))
+                        continue
+                    legacy = browser_asset_name(offer.platform, offer.arch, channel, offer.version)
+                    if legacy in names:
+                        # Old releases lack original-package hashes; retain their existing coverage.
+                        log_event('already_archived', file=legacy)
+                        continue
+                    if offer.browser_asset in reserved:
+                        offer = replace(offer, archive_name=browser_asset_name(
+                            offer.platform, offer.arch, None, offer.version, offer.digest))
+                        if offer.browser_asset in reserved:
+                            raise ValueError(f'Existing archive has no matching source provenance: {offer.browser_asset}')
                     package = download(offer, args.cache)
-                    built.extend(build(offer, package, args.output, args.seven_zip))
+                    files = build(offer, package, args.output, args.seven_zip)
+                    built.extend(files)
+                    available.append(json.loads((args.output / offer.version / offer.manifest_name).read_text(encoding='utf-8')))
+                    reserved.add(offer.browser_asset)
     write_json(args.output / f'chrome-{args.platform}-{args.arch}-discovery.json',
-               {'schema_version': 1, 'platform': args.platform, 'architecture': args.arch, 'channels': discovered})
+               {'schema_version': 1, 'platform': args.platform, 'architecture': args.arch,
+                'channels': discovered, 'manifests': reused})
     log_event('versions_discovered', platform=args.platform, architecture=args.arch, channels=discovered)
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:

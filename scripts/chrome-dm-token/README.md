@@ -8,27 +8,27 @@
 
 1. 在目标 Chrome 的 `chrome://version` 核对 Profile Path。下面参数应指向它的父目录（User Data 根目录），不能指向 `Default` 或 `Profile 1`。
 2. 在 `chrome://policy` 重新加载策略，等待成功，保证缓存为最近 24 小时内的本机缓存。首次注册尚未完成或策略未成功获取时，不能运行恢复。
-3. 正常完全退出 Chrome，包括后台进程，然后执行对应脚本。
+3. 正常完全退出 Chrome，包括后台进程，然后在仓库根目录执行对应脚本；单独下载脚本时改用实际保存路径。
 4. 正常启动 Chrome，确认 `chrome://policy` 的机器级云策略立即生效，并连续重启确认扩展及其设置保留。
 
 Windows：使用系统自带的 Windows PowerShell 5.1 或更高版本，以管理员身份打开 PowerShell。默认读取当前用户的 `%LOCALAPPDATA%\Google\Chrome\User Data`。
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\chrome-dm-token\fix-dm-token.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\chrome-dm-token\fix-dm-token.ps1
 ```
 
 自定义路径（如果使用另一个管理员账户提升权限，也必须显式指定原 Chrome 用户的目录）：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\chrome-dm-token\fix-dm-token.ps1 -UserDataDir 'D:\Chrome User Data'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\chrome-dm-token\fix-dm-token.ps1 -UserDataDir 'D:\Chrome User Data'
 ```
 
 macOS / Linux：以运行 Chrome 的同一用户执行，**不要 sudo**。Bash 兼容 macOS 自带的 3.2；需要系统命令 `openssl`、`od`、`head`、`tr`、`date`、`cmp`、`mkdir`、`cat`、`uname`，macOS 另需 `ioreg`、`sed`。不依赖 Python、Go 或 protobuf 包；缺少命令时会报错退出，不自动安装。
 
 ```bash
-bash ./chrome-dm-token/fix-dm-token.sh
+bash ./scripts/chrome-dm-token/fix-dm-token.sh
 # 自定义 --user-data-dir 的 Chrome：
-bash ./chrome-dm-token/fix-dm-token.sh --user-data-dir '/path/to/Chrome User Data'
+bash ./scripts/chrome-dm-token/fix-dm-token.sh --user-data-dir '/path/to/Chrome User Data'
 ```
 
 macOS 默认缓存目录为 `~/Library/Application Support/Google/Chrome`；Linux 默认按 `CHROME_USER_DATA_DIR` 或 `CHROME_CONFIG_HOME` / `XDG_CONFIG_HOME` / `~/.config` 下的 `google-chrome` 定位。Chrome 使用命令行 `--user-data-dir` 或其他目录时，显式传入相同路径。macOS 的 token 存储始终属于当前登录用户，与传入的缓存目录无关。
@@ -51,6 +51,6 @@ macOS 默认缓存目录为 `~/Library/Application Support/Google/Chrome`；Linu
 - token 属于设备／用户存储，不是随浏览器程序一起携带的便携配置。不能跨机器复制缓存或 token。
 - 只读取本机受信任缓存；脚本不验证缓存密码学签名，也不证明服务器仍认可注册。过期缓存应先在 Chrome 中重新加载策略。管理员撤销或重新纳管后的旧 token 不应恢复。
 - 不注册 updater、不提供未来 token 自动保存的服务，不应加入每次启动的自动修复任务。已被卸载而丢失的扩展设置不会被脚本还原。
-- 新构建的浏览器归档在浏览器目录旁带有 `chrome-dm-token/`；既有 Release 附件不覆盖，可从仓库 `scripts/chrome-dm-token/` 获取脚本。macOS `.app` 内不添加文件。
+- 恢复脚本仅在仓库 `scripts/chrome-dm-token/` 独立提供，不加入浏览器归档；需要时单独获取并手动执行。
 
 实现依据、来源、测试命令和实测边界见仓库的 [DM token 恢复约定](https://github.com/ayanamist/chrome_installer/blob/main/docs/dm-token.md)。

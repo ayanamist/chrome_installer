@@ -25,7 +25,7 @@
 - [序列化为 release_channel](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/protocol_serializer_json.cc)
 - [Google 对 Extended Stable 平台范围的说明](https://support.google.com/chrome/a/answer/16942104?hl=en)
 
-限制：没有执行 Windows Authenticode 或 macOS codesign 原生签名验证。这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在归档流程范围内。随包附带的可选本机 token 恢复工具见 [DM token 恢复约定](dm-token.md)，归档过程中不会执行。
+限制：没有执行 Windows Authenticode 或 macOS codesign 原生签名验证。这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在归档流程范围内。独立提供的可选本机 token 恢复工具见 [DM token 恢复约定](dm-token.md)，不打入浏览器归档。
 
 ## Linux
 
@@ -46,7 +46,7 @@
 
 Tag 始终为官方响应的四段 Chrome 版本号，不包含通道、平台或架构。GitHub 同一 tag 只有一个 Release，因此同版本的所有成功归档组合共用 Release。标题列出实际通道，描述列出实际覆盖的通道、平台、架构，以及 manifest 中记录的 Google 官方原始下载 URL，Windows／macOS 为原始 EXE／ZIP，Linux 另补同版本 RPM 链接。纯文件产物由构建 job 生成，统一发布 job 串行处理，避免矩阵任务争抢同一个 tag。
 
-每个组合只上传解包后重新生成的 Windows browser.7z 或 macOS／Linux browser.tar.xz。macOS tar.xz 包含完整的 `Google Chrome.app/` 应用包目录；Release 的 Assets 说明明确标注该名称和解压后的内容，并保留权限及符号链接。原始 EXE、EXE.xz、CRX3、DEB、RPM、manifest 和 SHA256SUMS 都不是 Release 附件。官方原始 URL 放在 Release 描述的来源表中。manifest 仅在临时工作流 artifact 内流转，集中发布后不作为独立公开文件保留；后续发布从已有说明表恢复来源及覆盖范围，并核对对应浏览器附件确实存在。GitHub Actions 临时 artifact 不作为长期存储；最终存储位置是 Release assets。仅在全部附件上传成功后发布新 draft；重试补充缺失附件，不覆盖已有文件。
+只上传解包后重新生成的 Windows browser.7z 或 macOS／Linux browser.tar.xz；内容相同的通道共享附件。macOS tar.xz 包含完整的 `Google Chrome.app/` 应用包目录；Release 的 Assets 说明明确标注该名称和解压后的内容，并保留权限及符号链接。原始 EXE、EXE.xz、CRX3、DEB、RPM、manifest 和 SHA256SUMS 都不是 Release 附件。官方原始 URL 放在 Release 描述的来源表中。完整 manifest 仅在临时工作流 artifact 内流转，精简来源及附件映射保留在新描述的隐藏 HTML 注释中；旧描述仍从说明表恢复来源及覆盖范围，并核对对应浏览器附件确实存在。GitHub Actions 临时 artifact 不作为长期存储；最终存储位置是 Release assets。仅在全部附件上传成功后发布新 draft；重试补充缺失附件，不覆盖已有文件。
 
 可用以下命令验证实现和生成的描述：
 
@@ -60,6 +60,37 @@ python scripts/publish_releases.py --input dist --repository OWNER/REPO --previe
 
 Actions 的时间和默认分支语义依据 [GitHub schedule 文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)，版本 tag 与发布过程依据 [GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。7-Zip 固定在 26.05，下载官方 portable 版本并核对 GitHub Release asset SHA-256；七个平台／架构归档组合及发布任务统一使用 Ubuntu 24.04 runner。
 
+
+## Stable 与 Extended Stable 的内容重合（2026-10-25）
+
+范围：本仓库的官方原包来源表、重打包附件与通道发现；实现及调查日期为 2026-10-25，来源元数据 schema_version=1。
+
+[Chromium 发布周期文档](https://chromium.googlesource.com/chromium/src/+/main/docs/process/release_cycle.md)及 [Google 通道说明](https://support.google.com/chrome/a/answer/16942104?hl=en)说明，两通道在 Extended Stable 新 milestone 的前两周发布相同版本，随后版本演进分开。通道表示更新选择与维护周期，不能据一次链接相同而取消 Extended Stable 查询。
+
+本次通过 GitHub Releases API 核对 [156.0.8078.48](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.48)：Windows x64 的 Stable／Extended Stable EXE URL 相同，两份 browser.7z 的大小均为 171147884 字节、API digest 均为 `sha256:fc1f92f33068518c68b53c76935f7ebb7a585c0ce27b6fed5b6a803f27899a72`；Windows ARM64 两份附件也具有相同大小及 digest。旧实现将 channel 写入附件名并按 channel／platform／architecture 分行，导致这些相同内容重复保存。
+
+同日独立查询 Omaha x64 的一次响应为 Windows Stable `156.0.8078.48`、Extended Stable `152.0.7977.169`；macOS Stable `155.0.8059.85`、Extended Stable `152.0.7977.169`。版本发现仍需保留两个通道。响应受发布进度与灰度影响，该记录不是固定版本映射，也不能据此否定此前已归档的通道覆盖。macOS 当前公开来源中 Extended Stable ZIP 名称含 `-ExtendedStable`，不能由 Windows 样本推断所有平台始终使用相同 URL。
+
+当前合同：
+
+- 独立查询 Stable／Extended Stable；相同平台、架构、原生来源链接合并为一行，列出两个通道。不同 URL 仍分别保留，不按版本号猜测内容。
+- 同平台、同架构、同版本的原包 SHA-256 与大小相同，复用本次已构建或已有 Release 元数据指向的附件。缺少原包哈希的历史记录不用于跨通道的原包复用；旧通道附件仍按原约定跳过构建。
+- 新附件使用 `chrome-平台-架构-版本-browser.7z` 或 `.tar.xz`。若名称已占用且原包不同，增加完整原包 SHA-256 后缀；下载缓存也按原包哈希分目录。同版本不同内容分别保存，不覆盖。
+- 发布阶段在同平台、同架构内按归档大小／SHA-256 去重，也可复用 GitHub 已记录相同大小与 digest 的历史附件。不同平台／架构不互相去重。既有附件不删除、不重命名，并保留每个旧文件的来源关系。
+- 新 manifest 的 `browser_asset` 显式指向附件。复用记录随 discovery 的 `manifests` 数组流转，必须匹配外层平台、架构及通道版本。发布时核对复用附件存在；无新增附件也能补充新通道覆盖，内容相同跳过重复 PATCH。
+- 新描述用 `chrome-archive-metadata-v1` HTML 注释保留精简 JSON 记录，字段仅含 schema_version、version、channel、platform、architecture、browser_asset 及 source 的 url／native_url／rpm_url／sha256／size（已知时）。不保留执行参数或完整运行元数据。读取时校验版本、平台、架构、通道、Google HTTPS 来源和合法附件名，并要求附件存在；无注释的旧格式继续读取来源表，包括合并通道及 CRX3+EXE／ZIP 双链接。损坏的注释明确报错，不静默退回表格丢失共享关系。
+
+验证边界：上述线上附件比较依赖 API digest，没有重新下载附件计算哈希，也没有验证 macOS 两通道同版本包是否一致。新增回归用临时文件及模拟下载／GitHub API 验证发现、去重、增量、来源回读和发布重试，未进行真实 Chrome 大文件重打包或线上发布。2026-10-25 已确认 DM token 恢复工具独立分发；原先要求附带该工具的测试已按此合同修正，全量 Python 测试通过。
+
+验证命令（官方响应及 Release 状态可能变化）：
+
+```bash
+gh api repos/ayanamist/chrome_installer/releases/tags/156.0.8078.48 --jq '{body, assets: [.assets[] | {name, size, digest}]}'
+python3 -m unittest discover -s tests -p 'test_channel_dedup.py' -v
+python3 -m unittest discover -s tests -v
+python3 scripts/chrome_archive.py --platform windows --arch x64 --query-only
+python3 scripts/chrome_archive.py --platform macos --arch x64 --query-only
+```
 
 ## GitHub Actions 依赖版本
 
@@ -97,12 +128,12 @@ Workflow 使用官方维护的大版本 tag，自动跟随该大版本内的兼�
 
 ## 当前可获取版本的 Release 描述更新
 
-各归档任务查询官方清单后，将该平台／架构本次实际获得的通道与版本写入根目录的 `chrome-平台-架构-discovery.json`。即使浏览器归档已存在、跳过下载和压缩，也必须保留这份记录；`has_discovery=true` 控制上传临时 Actions artifact。查询记录与浏览器 manifest 均不作为 Release 附件。
+各归档任务查询官方清单后，将该平台／架构本次实际获得的通道与版本写入根目录的 `chrome-平台-架构-discovery.json`，并在 `manifests` 中携带本次复用归档的精简来源及通道映射。即使浏览器归档已存在、跳过下载和压缩，也必须保留这份记录；`has_discovery=true` 控制上传临时 Actions artifact。查询记录与浏览器 manifest 文件均不作为 Release 附件。
 
 发布器先读取本次所有 discovery 记录，取各平台／架构／通道版本的并集，再合并本次新建归档的版本，只通过版本 tag 查询对应 Release。不会分页列举所有历史 Release，也不会把最大版本号当成唯一当前版本；Stable、Extended Stable 及各平台发布进度不同的版本都保留在这批集合内。复用归档阶段的结果，不在发布阶段重新选择一批当前版本。仅有本地归档 manifest 的输入仍按该批归档版本发布及刷新。
 
 只为集合中的版本使用当前 checkout 的 `release_text()` 模板重新生成标题和描述，没有新增浏览器附件时仍执行；已不在本次查询结果中的历史版本不改写。对应版本内已经归档的其他平台和通道、已记录的 EXE／ZIP／RPM 链接继续保留。旧版排版或手工追加说明由当前模板覆盖，相同结果省略重复 PATCH。说明刷新只修改 name／body，不修改 tag、附件、draft 或 prerelease 状态。无法恢复已有浏览器附件的来源时明确失败，避免静默丢失覆盖组合。
 
-## 随包附带的 DM token 恢复脚本（2026-10-25）
+## 独立提供的 DM token 恢复脚本（2026-10-25）
 
-新构建归档除浏览器目录外，还在同级包含 `chrome-dm-token/`：Windows 为 PowerShell 脚本，macOS／Linux 为 Bash 脚本，均附操作说明。macOS 应用包本身不添加文件。归档流程仅复制脚本，不读取本机缓存或执行修复。tar.xz 回读校验包含辅助目录的所有文件；Windows 仍对完整 7z 执行 `7z t`。旧附件继续按不覆盖规则保留，Release 说明提供仓库脚本链接。缓存字段、本机身份与持久化路径合同见 [DM token 恢复约定](dm-token.md)。
+浏览器归档只包含提取的浏览器目录，不附带 DM token 恢复工具。Windows PowerShell 与 macOS／Linux Bash 脚本保留在仓库 `scripts/chrome-dm-token/`，需要时单独获取并手动执行。归档流程不复制或运行脚本，不读取本机缓存。缓存字段、本机身份、持久化路径及独立脚本的验证边界见 [DM token 恢复约定](dm-token.md)。
