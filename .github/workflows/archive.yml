@@ -1,0 +1,103 @@
+name: Archive Chrome releases
+
+on:
+  schedule:
+    # 04:31 Asia/Singapore (UTC+8), every day.
+    - cron: '31 20 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/archive.yml'
+      - 'scripts/**'
+      - 'tests/**'
+  pull_request:
+    paths:
+      - '.github/workflows/archive.yml'
+      - 'scripts/**'
+      - 'tests/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-archive-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - run: python -m unittest discover -s tests -v
+
+  archive:
+    needs: test
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {platform: windows, arch: x64, runner: windows-latest}
+          - {platform: windows, arch: arm64, runner: windows-latest}
+          - {platform: macos, arch: x64, runner: macos-15}
+          - {platform: macos, arch: arm64, runner: macos-15}
+          - {platform: linux, arch: x64, runner: ubuntu-24.04}
+          - {platform: linux, arch: arm64, runner: ubuntu-24.04}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Set up 7-Zip
+        id: sevenzip
+        run: python scripts/setup_7zip.py
+      - name: Download, verify and repack official payloads
+        id: archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEVEN_ZIP: ${{ steps.sevenzip.outputs.command }}
+        run: >-
+          python scripts/chrome_archive.py
+          --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+          --seven-zip "${{ steps.sevenzip.outputs.command }}" --output dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.archive.outputs.has_assets == 'true'
+        with:
+          name: chrome-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: archive
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: chrome-*
+          path: dist/
+          merge-multiple: true
+      - name: Publish version tags and releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_releases.py --input dist
