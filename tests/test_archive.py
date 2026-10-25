@@ -142,6 +142,40 @@ class SourceTests(unittest.TestCase):
                 self.assertTrue(result.getmember('Chrome.app/Current').issym())
                 self.assertEqual(result.getmember('Chrome.app/Current').linkname, 'binary')
 
+    def test_repair_helpers_are_packaged_beside_unmodified_app(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = root / 'Google Chrome.app'
+            app.mkdir()
+            (app / 'signed-content').write_bytes(b'unchanged app contents')
+            repair = archive.stage_token_repair('macos', root)
+            self.assertEqual(sorted(p.name for p in repair.iterdir()), ['README.md', 'fix-dm-token.sh'])
+            archive.compress_tar_xz(app, root / 'browser.tar.xz', extras=(repair,))
+            with tarfile.open(root / 'browser.tar.xz') as result:
+                self.assertEqual(result.extractfile('Google Chrome.app/signed-content').read(), b'unchanged app contents')
+                self.assertEqual(result.extractfile('chrome-dm-token/fix-dm-token.sh').read(),
+                                 (repair / 'fix-dm-token.sh').read_bytes())
+                self.assertEqual(result.getmember('chrome-dm-token/fix-dm-token.sh').mode, 0o755)
+                self.assertFalse(any(name.startswith('Google Chrome.app/chrome-dm-token') for name in result.getnames()))
+
+    def test_windows_compression_includes_repair_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            browser = root / 'Chrome-bin'
+            browser.mkdir()
+            repair = archive.stage_token_repair('windows', root)
+            destination = root / 'browser.7z'
+            def sevenzip(command, action, *args, **kwargs):
+                if action == 'a':
+                    self.assertIn('Chrome-bin', args)
+                    self.assertIn('chrome-dm-token', args)
+                    self.assertEqual(kwargs['cwd'], root)
+                    destination.write_bytes(b'fixture archive')
+            with patch.object(archive, 'seven_zip', side_effect=sevenzip) as run:
+                archive.compress('7zz', browser, destination, extras=(repair,))
+            self.assertEqual(run.call_args_list[-1].args[1], 't')
+
     def test_rejects_unsafe_origins_and_names(self):
         for value in ['http://dl.google.com/x', 'https://google.com.evil.test/x', 'https://user:pass@dl.google.com/x']:
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -205,7 +239,9 @@ class SourceTests(unittest.TestCase):
                 header[0x40:0x44] = b'PE\0\0'
                 struct.pack_into('<H', header, 0x44, 0x8664)
                 (browser / 'chrome.exe').write_bytes(header)
-            def compress(command, source, destination):
+            def compress(command, source, destination, extras=()):
+                self.assertEqual([path.name for path in extras], ['chrome-dm-token'])
+                self.assertTrue((extras[0] / 'fix-dm-token.ps1').is_file())
                 destination.write_bytes(b'verified browser archive fixture')
             with patch.object(archive, 'verify_pe_version') as verify, \
                  patch.object(archive, 'seven_zip', side_effect=extract), patch.object(archive, 'compress', side_effect=compress):

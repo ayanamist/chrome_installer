@@ -49,7 +49,29 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 
 manifest 和 discovery 记录只作为工作流内部中间数据，用于校验归档及生成 Release 说明，不作为 Release 附件；不上传原始 EXE、EXE 的 XZ、CRX3、DEB、JSON 或 SHA256SUMS。后续增量发布从现有 Release 的来源表恢复已覆盖组合及已记录的 EXE／ZIP／RPM 链接，无需保留公开的元数据文件。来源表并非 Google 所有安装分发格式的目录：没有列举 Windows MSI／Enterprise Bundle、macOS DMG／PKG 或 Chrome for Testing。
 
-浏览器归档的根目录分别是 Windows 的 `Chrome-bin`、macOS 的 `Google Chrome.app`、Linux 的 `chrome`。保留文件内容、可执行权限和符号链接，不重签名、不移除本地化文件。Linux 依赖库和系统集成仍需使用者的系统提供。
+归档内的浏览器目录分别是 Windows 的 `Chrome-bin`、macOS 的 `Google Chrome.app`、Linux 的 `chrome`。保留文件内容、可执行权限和符号链接，不重签名、不移除本地化文件。Linux 依赖库和系统集成仍需使用者的系统提供。
+
+## 解压使用时恢复 DM token
+
+提供 Windows 的 PowerShell 脚本和 macOS／Linux 的 Bash 脚本。针对已通过 Chrome 企业云管理注册、但持久 DM token 丢失而导致策略扩展每次启动被卸载再安装的场景，脚本从最近的本机机器级云策略缓存恢复 token。没有此类云策略的普通使用场景无需运行。
+
+新构建的归档在上述浏览器目录旁附带 `chrome-dm-token/`，包含对应平台脚本及使用说明；macOS `.app` 内不添加文件。已有 Release 附件保持原样，可直接使用仓库的 [恢复脚本和操作步骤](scripts/chrome-dm-token/README.md)。
+
+先在 `chrome://policy` 重新加载策略，然后正常完全退出 Chrome。在解压目录执行：
+
+```powershell
+# Windows：管理员 PowerShell；默认使用当前用户的 Chrome User Data。
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\chrome-dm-token\fix-dm-token.ps1
+# 自定义目录：在上面命令末尾加 -UserDataDir 'D:\Chrome User Data'
+```
+
+```bash
+# macOS / Linux：使用 Chrome 的同一用户，不要 sudo。
+bash ./chrome-dm-token/fix-dm-token.sh
+# 自定义目录：加 --user-data-dir '/path/to/Chrome User Data'
+```
+
+恢复后正常启动 Chrome 并检查策略和扩展跨重启保留情况。脚本保留任何已有 token；只接受匹配本机、active 且 24 小时内的缓存，不生成新注册、不安装 updater。macOS／Linux 通常会自行保存 token，仅缺失时需要此脚本。实现证据和验证边界见 [DM token 恢复约定](docs/dm-token.md)。
 
 ## 阶段日志
 
