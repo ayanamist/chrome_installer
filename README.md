@@ -29,7 +29,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 - 同一版本出现在两个通道时，共用一个 tag 和 Release，名称为 `版本号 · Stable / Extended Stable`。
 - Release 描述依据已上传的浏览器归档及内部来源元数据，列出通道、平台、架构及对应的 Google 官方原包下载链接（CRX3／DEB，以及匹配版本的 EXE／ZIP／RPM）。
 - 已存在且附件齐全的组合直接跳过，不重复下载或重新压缩；新增平台、架构或通道会补充到现有版本。
-- 每次发布都会分页遍历所有历史版本 Release，按当前代码的模板重写标题及描述；没有新增归档时也执行。保留可恢复的来源链接和实际覆盖组合，不保留旧版排版或手工追加说明。内容已经一致时跳过重复写入，附件及 draft／prerelease 状态不因说明刷新而变化。
+- 每次执行先由归档任务查询各平台／架构／通道的当前可获取版本，发布器只按这批版本的并集刷新对应 Release，使用当前代码的模板。已归档、无需下载的组合也会传递查询记录，因此没有新增浏览器附件时仍可刷新描述；不扫描或改写其他历史版本。保留对应版本的来源链接及已有覆盖组合，旧版排版或手工追加说明由当前模板覆盖；相同内容跳过重复写入。
 - 不覆盖已有版本的附件。重试遇到同名不同哈希的附件会报错，避免静默替换已归档的内容。
 - 新 Release 先作为 draft 创建，全部附件上传成功后才发布。失败的 draft 可由下次执行继续补齐。
 
@@ -43,7 +43,9 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 
 官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows/macOS 保留构建输入 CRX3，并补充同版本、同架构和通道的 Windows `*_chrome_installer_uncompressed.exe` 或 macOS updater ZIP（可获取时）；Linux 为原始 DEB 及匹配版本、架构的 RPM。若 YUM 仓库尚未提供对应版本，则省略 RPM 链接并记录日志，不使用会变化的 `current` 地址。EXE／ZIP 的另一次官方响应也必须版本一致；最新响应不匹配时尝试按归档版本查询，仍无匹配则省略并记录实际返回版本，避免将新旧版本混在一起。
 
-manifest 只作为工作流内部中间数据，用于校验归档及生成 Release 说明，不作为 Release 附件；不上传原始 EXE、EXE 的 XZ、CRX3、DEB、JSON 或 SHA256SUMS。后续增量发布从现有 Release 的来源表恢复已覆盖组合及已记录的 EXE／ZIP／RPM 链接，无需保留公开的元数据文件。来源表并非 Google 所有安装分发格式的目录：没有列举 Windows MSI／Enterprise Bundle、macOS DMG／PKG 或 Chrome for Testing。
+每个归档任务还会生成 `*-discovery.json`，记录本次查询到的版本；即使浏览器附件已齐，也上传这份很小的内部记录。发布器复用这些结果，不重新查询一遍归档版本，避免发布进度变化造成版本偏差。仅有本地归档 manifest 时，以该批输入的版本为范围。
+
+manifest 和 discovery 记录只作为工作流内部中间数据，用于校验归档及生成 Release 说明，不作为 Release 附件；不上传原始 EXE、EXE 的 XZ、CRX3、DEB、JSON 或 SHA256SUMS。后续增量发布从现有 Release 的来源表恢复已覆盖组合及已记录的 EXE／ZIP／RPM 链接，无需保留公开的元数据文件。来源表并非 Google 所有安装分发格式的目录：没有列举 Windows MSI／Enterprise Bundle、macOS DMG／PKG 或 Chrome for Testing。
 
 浏览器归档的根目录分别是 Windows 的 `Chrome-bin`、macOS 的 `Google Chrome.app`、Linux 的 `chrome`。保留文件内容、可执行权限和符号链接，不重签名、不移除本地化文件。Linux 依赖库和系统集成仍需使用者的系统提供。
 

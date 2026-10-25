@@ -24,6 +24,39 @@ def offer(**changes):
 
 
 class SourceTests(unittest.TestCase):
+    def test_already_archived_offer_still_records_current_version_for_refresh(self):
+        import os
+        item = offer()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / 'github-output'
+            with patch.object(sys, 'argv', ['chrome_archive.py', '--platform', 'windows', '--arch', 'x64',
+                            '--channel', 'stable', '--output', str(root / 'dist'), '--repository', 'owner/repo']), \
+                 patch.object(archive.shutil, 'which', return_value='/existing/7zz'), \
+                 patch.object(archive, 'query_omaha', return_value=item), \
+                 patch.object(archive, 'get_release', return_value={'assets': [{'name': item.browser_asset}]}), \
+                 patch.object(archive, 'download') as download, patch.object(archive, 'build') as build, \
+                 patch.object(archive, 'log_runtime'), patch.dict(os.environ, {'GITHUB_OUTPUT': str(output)}):
+                archive.main()
+            download.assert_not_called()
+            build.assert_not_called()
+            self.assertEqual(publish.discovered_versions(root / 'dist'), {item.version})
+            self.assertIn('has_assets=false', output.read_text())
+            self.assertIn('has_discovery=true', output.read_text())
+
+    def test_discovery_combines_versions_and_rejects_linux_extended_stable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive.write_json(root / 'windows-discovery.json', dict(schema_version=1, platform='windows',
+                architecture='x64', channels={'stable': '156.0.0.1', 'extended': '152.0.0.1'}))
+            archive.write_json(root / 'linux-discovery.json', dict(schema_version=1, platform='linux',
+                architecture='arm64', channels={'stable': '156.0.0.1'}))
+            self.assertEqual(publish.discovered_versions(root), {'156.0.0.1', '152.0.0.1'})
+            archive.write_json(root / 'linux-discovery.json', dict(schema_version=1, platform='linux',
+                architecture='arm64', channels={'extended': '156.0.0.1'}))
+            with self.assertRaisesRegex(ValueError, 'Linux Extended Stable'):
+                publish.discovered_versions(root)
+
     def test_native_query_omits_crx3_and_uses_package_name_without_run(self):
         import io
         response = {'response': {'app': [{'appid': '{8A69D345-D564-463C-AFF1-A69D9E530F96}',
@@ -223,26 +256,24 @@ class ReleaseTests(unittest.TestCase):
         self.native_query.assert_called_with('windows', 'x86', 'extended', accept_crx3=False, target_version=item['version'])
         self.assertEqual(enriched[0]['source']['native_url'], exact.urls[0])
 
-    def test_all_historical_releases_are_rewritten_with_current_template_across_pages(self):
-        releases = []
-        for index, version in enumerate(['151.0.0.1', '152.0.0.1']):
-            item = dict(schema_version=1, version=version, channel='stable', platform='windows', architecture='x64',
-                        source={'url': f'https://dl.google.com/{version}.crx3'})
-            title, body = publish.release_text(version, [item])
-            releases.append(dict(id=index + 1, tag_name=version, name='Old title', draft=bool(index),
-                body=body.replace('[CRX3]', '[Google original]') + '\nOld custom description.\n',
-                assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', version)}]))
-        with patch.object(publish, 'gh', side_effect=[[[releases[0]], [releases[1]]], None, None]) as api:
-            publish.refresh_release_descriptions('owner/repo')
-        self.assertEqual(api.call_count, 3)
-        self.assertEqual(api.call_args_list[0].args,
-                         ('api', 'repos/owner/repo/releases?per_page=100', '--paginate', '--slurp'))
-        for call, release in zip(api.call_args_list[1:], releases):
-            payload = call.kwargs['data']
-            self.assertEqual(set(payload), {'name', 'body'})
-            self.assertIn('[CRX3]', payload['body'])
-            self.assertNotIn('Old custom description.', payload['body'])
-            self.assertEqual(payload['name'], release['tag_name'] + ' · Stable')
+    def test_only_currently_discovered_versions_are_refreshed(self):
+        version = '152.0.0.1'
+        item = dict(schema_version=1, version=version, channel='stable', platform='windows', architecture='x64',
+                    source={'url': f'https://dl.google.com/{version}.crx3'})
+        title, body = publish.release_text(version, [item])
+        release = dict(id=1, tag_name=version, name='Old title', draft=True,
+                       body=body.replace('[CRX3]', '[Google original]') + '\nOld custom description.\n',
+                       assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', version)}])
+        with patch.object(publish, 'get_release', return_value=release) as get, patch.object(publish, 'gh') as api:
+            publish.refresh_release_descriptions('owner/repo', [version, version])
+        get.assert_called_once_with('owner/repo', version)
+        api.assert_called_once()
+        self.assertEqual(api.call_args.args[:2], ('api', 'repos/owner/repo/releases/1'))
+        payload = api.call_args.kwargs['data']
+        self.assertEqual(set(payload), {'name', 'body'})
+        self.assertIn('[CRX3]', payload['body'])
+        self.assertNotIn('Old custom description.', payload['body'])
+        self.assertEqual(payload['name'], title)
 
     def test_unchanged_current_description_is_checked_without_redundant_patch(self):
         item = dict(schema_version=1, version='152.0.0.1', channel='stable', platform='windows', architecture='x64',
@@ -250,25 +281,42 @@ class ReleaseTests(unittest.TestCase):
         title, body = publish.release_text(item['version'], [item])
         release = dict(id=1, tag_name=item['version'], name=title, body=body,
                        assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', item['version'])}])
-        with patch.object(publish, 'gh', return_value=[[release]]) as api:
-            publish.refresh_release_descriptions('owner/repo')
-        self.assertEqual(api.call_count, 1)
+        with patch.object(publish, 'get_release', return_value=release) as get, patch.object(publish, 'gh') as api:
+            publish.refresh_release_descriptions('owner/repo', {item['version']})
+        get.assert_called_once_with('owner/repo', item['version'])
+        api.assert_not_called()
 
     def test_description_refresh_refuses_to_silently_drop_unrecognized_coverage(self):
         release = dict(id=1, tag_name='152.0.0.1', name='Old title', body='No source coverage',
                        assets=[{'name': archive.browser_asset_name('windows', 'x64', 'stable', '152.0.0.1')}])
-        with patch.object(publish, 'gh', return_value=[[release]]) as api:
+        with patch.object(publish, 'get_release', return_value=release), patch.object(publish, 'gh') as api:
             with self.assertRaisesRegex(ValueError, 'Cannot recover source coverage'):
-                publish.refresh_release_descriptions('owner/repo')
-        self.assertEqual(api.call_count, 1)
+                publish.refresh_release_descriptions('owner/repo', {'152.0.0.1'})
+        api.assert_not_called()
 
-    def test_cli_refreshes_old_releases_even_without_new_archives(self):
+    def test_no_current_versions_means_no_release_requests(self):
+        with patch.object(publish, 'get_release') as get, patch.object(publish, 'gh') as api:
+            publish.refresh_release_descriptions('owner/repo', set())
+        get.assert_not_called()
+        api.assert_not_called()
+
+    def test_cli_uses_discovery_even_without_new_archives(self):
         with patch.object(sys, 'argv', ['publish_releases.py', '--repository', 'owner/repo', '--target', 'commit']), \
-             patch.object(publish, 'publish') as archives, patch.object(publish, 'refresh_release_descriptions') as refresh, \
-             patch.object(publish, 'log_runtime'):
+             patch.object(publish, 'publish', return_value=set()) as archives, \
+             patch.object(publish, 'discovered_versions', return_value={'156.0.0.1'}) as discovery, \
+             patch.object(publish, 'refresh_release_descriptions') as refresh, patch.object(publish, 'log_runtime'):
             publish.main()
         archives.assert_called_once_with('owner/repo', 'commit', Path('dist'))
-        refresh.assert_called_once_with('owner/repo')
+        discovery.assert_called_once_with(Path('dist'))
+        refresh.assert_called_once_with('owner/repo', {'156.0.0.1'})
+
+    def test_cli_also_refreshes_versions_built_without_discovery_files(self):
+        with patch.object(sys, 'argv', ['publish_releases.py', '--repository', 'owner/repo', '--target', 'commit']), \
+             patch.object(publish, 'publish', return_value={'156.0.0.2'}), \
+             patch.object(publish, 'discovered_versions', return_value={'156.0.0.1'}), \
+             patch.object(publish, 'refresh_release_descriptions') as refresh, patch.object(publish, 'log_runtime'):
+            publish.main()
+        refresh.assert_called_once_with('owner/repo', {'156.0.0.1', '156.0.0.2'})
 
     def test_linux_rpm_links_match_version_and_survive_incremental_release(self):
         version = '156.0.0.1'

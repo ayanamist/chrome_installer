@@ -515,12 +515,14 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     log_runtime(seven_zip=args.seven_zip, xz_preset=6, seven_zip_level=5, seven_zip_threads=2)
     built = []
+    discovered = {}
     channels = ['stable'] if args.platform == 'linux' else list(CHANNELS) if args.channel == 'all' else [args.channel]
     for channel in channels:
         with log_context(platform=args.platform, architecture=args.arch, channel=channel):
             with stage('query_official_manifest'):
                 offer = query_linux(args.arch) if args.platform == 'linux' else query_omaha(args.platform, args.arch, channel)
             log_event('offer', **offer.__dict__)
+            discovered[channel] = offer.version
             if args.query_only:
                 continue
             with log_context(version=offer.version):
@@ -534,9 +536,13 @@ def main():
                             continue
                     package = download(offer, args.cache)
                     built.extend(build(offer, package, args.output, args.seven_zip))
+    write_json(args.output / f'chrome-{args.platform}-{args.arch}-discovery.json',
+               {'schema_version': 1, 'platform': args.platform, 'architecture': args.arch, 'channels': discovered})
+    log_event('versions_discovered', platform=args.platform, architecture=args.arch, channels=discovered)
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
             stream.write(f'has_assets={str(bool(built)).lower()}\n')
+            stream.write('has_discovery=true\n')
     log_event('archive_job_complete', release_assets=len(built) // 2, internal_manifests=len(built) // 2,
               installers_executed=False)
 

@@ -102,6 +102,10 @@ macOS 的无 acceptformat 请求返回 `GoogleChrome-版本.zip`（Extended Stab
 
 官方其他分发格式依据：[Windows 企业包内容](https://support.google.com/chrome/a/answer/7650032)、[macOS 下载说明](https://support.google.com/chrome/a/answer/9020580?hl=en)、[macOS PKG 与 DMG](https://cloud.google.com/blog/products/chrome-enterprise/simplifying-chrome-deployments-on-macos)。未对 MSI／DMG／PKG 做历史版本定位，也没有新增原包 Release 附件。
 
-## 历史 Release 描述统一更新
+## 当前可获取版本的 Release 描述更新
 
-每次发布流程都分页读取全部版本 Release，从已支持的旧／新来源表格式恢复平台、架构、通道及 EXE／ZIP／RPM 链接，使用当前 checkout 中的 `release_text()` 模板重新生成标题和描述。此步骤不依赖是否生成新的 archive artifact；旧版布局及手工追加说明均由当前模板覆盖。生成结果相同时省略重复 PATCH。说明刷新只修改 name／body，不修改 tag、附件、draft 或 prerelease 状态。无法恢复某个已存在浏览器附件的来源时明确失败，避免把已有覆盖组合静默丢掉。兼容旧格式是为了读取来源数据，不是保留旧描述的格式。
+各归档任务查询官方清单后，将该平台／架构本次实际获得的通道与版本写入根目录的 `chrome-平台-架构-discovery.json`。即使浏览器归档已存在、跳过下载和压缩，也必须保留这份记录；`has_discovery=true` 控制上传临时 Actions artifact。查询记录与浏览器 manifest 均不作为 Release 附件。
+
+发布器先读取本次所有 discovery 记录，取各平台／架构／通道版本的并集，再合并本次新建归档的版本，只通过版本 tag 查询对应 Release。不会分页列举所有历史 Release，也不会把最大版本号当成唯一当前版本；Stable、Extended Stable 及各平台发布进度不同的版本都保留在这批集合内。复用归档阶段的结果，不在发布阶段重新选择一批当前版本。仅有本地归档 manifest 的输入仍按该批归档版本发布及刷新。
+
+只为集合中的版本使用当前 checkout 的 `release_text()` 模板重新生成标题和描述，没有新增浏览器附件时仍执行；已不在本次查询结果中的历史版本不改写。对应版本内已经归档的其他平台和通道、已记录的 EXE／ZIP／RPM 链接继续保留。旧版排版或手工追加说明由当前模板覆盖，相同结果省略重复 PATCH。说明刷新只修改 name／body，不修改 tag、附件、draft 或 prerelease 状态。无法恢复已有浏览器附件的来源时明确失败，避免静默丢失覆盖组合。

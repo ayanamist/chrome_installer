@@ -62,7 +62,7 @@ jobs:
           --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
           --seven-zip "${{ steps.sevenzip.outputs.command }}" --output dist
       - uses: actions/upload-artifact@v7
-        if: steps.archive.outputs.has_assets == 'true'
+        if: steps.archive.outputs.has_discovery == 'true'
         with:
           name: chrome-${{ matrix.platform }}-${{ matrix.arch }}
           path: dist/
@@ -89,7 +89,7 @@ jobs:
           pattern: chrome-*
           path: dist/
           merge-multiple: true
-      - name: Publish archives and refresh all release descriptions
+      - name: Publish archives and refresh currently offered versions
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/publish_releases.py --input dist

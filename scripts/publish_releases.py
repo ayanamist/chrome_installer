@@ -152,6 +152,25 @@ def existing_release_manifests(release):
     return items
 
 
+def discovered_versions(root):
+    """Read the versions queried by this run, including already archived offers."""
+    versions = set()
+    for path in root.glob('*-discovery.json'):
+        value = json.loads(path.read_text(encoding='utf-8'))
+        channels = value.get('channels')
+        if not isinstance(channels, dict) or not channels:
+            raise ValueError(f'Invalid discovery channels: {path}')
+        for channel, version in channels.items():
+            if not isinstance(version, str):
+                raise ValueError(f'Invalid discovery version: {path}')
+            validate_manifest({'schema_version': value.get('schema_version'), 'version': version,
+                               'platform': value.get('platform'), 'architecture': value.get('architecture'),
+                               'channel': channel}, version)
+            versions.add(version)
+    log_event('refresh_versions_selected', versions=sorted(versions))
+    return versions
+
+
 def publish(repository, target, root):
     if not target:
         raise ValueError('A source commit is required for version tags')
@@ -191,19 +210,20 @@ def publish(repository, target, root):
         log_event('release_published', version=version, title=title, uploaded_archive_count=len(group['assets']))
     if not groups:
         log_event('no_new_archives')
+    return set(groups)
 
 
-def refresh_release_descriptions(repository):
-    """Render every historical version with this checkout's current template."""
-    with stage('list_release_descriptions'):
-        pages = gh('api', f'repos/{repository}/releases?per_page=100', '--paginate', '--slurp')
+def refresh_release_descriptions(repository, versions):
+    """Apply the current template only to versions offered in this run."""
     checked = updated = 0
-    for release in (release for page in pages for release in page):
-        version = release['tag_name']
+    for version in sorted(set(versions)):
         if not VERSION.fullmatch(version):
-            log_event('release_description_skipped', version=version, reason='not_a_chrome_version_tag')
-            continue
+            raise ValueError('Invalid refresh version')
         with stage('refresh_release_description', version=version):
+            release = get_release(repository, version)
+            if not release:
+                log_event('release_description_skipped', version=version, reason='release_not_created')
+                continue
             items = existing_release_manifests(release)
             names = {asset['name'] for asset in release['assets']
                      if asset['name'].endswith(('-browser.7z', '-browser.tar.xz'))}
@@ -236,8 +256,9 @@ def main():
             title, body = release_text(version, add_native_source_links(add_linux_rpm_links(group['manifests'])))
             print(title + '\n\n' + body)
     else:
-        publish(args.repository, args.target, args.input)
-        refresh_release_descriptions(args.repository)
+        versions = discovered_versions(args.input)
+        versions.update(publish(args.repository, args.target, args.input))
+        refresh_release_descriptions(args.repository, versions)
 
 
 if __name__ == '__main__':
