@@ -39,7 +39,7 @@ class SourceTests(unittest.TestCase):
                 self.assertEqual(request['app'][0]['ap'], '-arch_x86')
                 self.assertEqual(request['app'][0]['release_channel'], channel)
                 self.assertEqual(result.arch, 'x86')
-                self.assertIn('windows-x86-' + channel, result.original_asset)
+                self.assertIn('windows-x86-' + channel, result.browser_asset)
 
     def test_x86_binary_is_checked_as_i386_without_execution(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,18 +60,16 @@ class SourceTests(unittest.TestCase):
             with self.subTest(platform=platform), self.assertRaisesRegex(ValueError, 'Unsupported target'):
                 offer(platform=platform, arch='x86')
 
-    def test_uncompressed_original_gets_extra_xz_suffix_and_arch_prefix(self):
+    def test_only_repacked_browser_assets_are_selected(self):
         item = offer()
-        self.assertTrue(item.original_asset.endswith(item.original_name + '.xz'))
-        self.assertNotEqual(item.original_asset, offer(arch='arm64').original_asset)
+        self.assertEqual(item.asset_names, [item.browser_asset])
+        self.assertNotEqual(item.browser_asset, offer(arch='arm64').browser_asset)
         raw = offer(platform='linux', original_name='google-chrome.deb')
-        self.assertTrue(raw.original_asset.endswith('.deb'))
-        self.assertFalse(raw.original_asset.endswith('.deb.7z'))
+        self.assertEqual(raw.asset_names, [raw.browser_asset])
         self.assertTrue(raw.browser_asset.endswith('.tar.xz'))
         self.assertTrue(item.browser_asset.endswith('.7z'))
 
-    def test_xz_original_round_trip_and_tar_unix_metadata(self):
-        import lzma
+    def test_tar_round_trip_preserves_unix_metadata(self):
         import tarfile
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -81,8 +79,6 @@ class SourceTests(unittest.TestCase):
             binary.write_bytes(b'original bytes' * 50)
             binary.chmod(0o755)
             (source / 'Current').symlink_to('binary')
-            archive.compress_file_xz(binary, root / 'binary.xz')
-            self.assertEqual(lzma.open(root / 'binary.xz', 'rb').read(), binary.read_bytes())
             archive.compress_tar_xz(source, root / 'app.tar.xz')
             with tarfile.open(root / 'app.tar.xz') as result:
                 self.assertEqual(result.getmember('Chrome.app/binary').mode, 0o755)
@@ -158,6 +154,36 @@ class SourceTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_only_browser_archive_is_uploaded_even_with_legacy_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / '156.0.0.1'
+            folder.mkdir()
+            name = archive.browser_asset_name('windows', 'x86', 'stable', folder.name)
+            browser = folder / name
+            browser.write_bytes(b'browser archive')
+            item = dict(schema_version=1, version=folder.name, platform='windows', architecture='x86',
+                        channel='stable', source={'url': 'https://dl.google.com/payload.crx3'},
+                        files=[{'name': name, 'size': browser.stat().st_size, 'sha256': archive.sha256(browser)},
+                               {'name': 'original.exe.xz', 'size': 10, 'sha256': '0' * 64}])
+            (folder / 'internal-manifest.json').write_text(json.dumps(item))
+            groups = publish.local_groups(root)
+            self.assertEqual(set(groups[folder.name]['assets']), {name})
+            with patch.object(publish, 'get_release', return_value=None), patch.object(publish, 'gh', return_value={'id': 1, 'assets': []}) as api, patch.object(publish.subprocess, 'run') as upload:
+                publish.publish('owner/repo', 'commit', root)
+                upload.assert_called_once_with(['gh', 'release', 'upload', folder.name, str(browser), '--repo', 'owner/repo'], check=True)
+                self.assertIn('https://dl.google.com/payload.crx3', api.call_args.kwargs['data']['body'])
+
+    def test_existing_coverage_and_source_links_survive_without_metadata_assets(self):
+        items = [dict(schema_version=1, version='156.0.0.1', platform='windows', architecture='x86', channel='stable', source={'url': 'https://dl.google.com/windows.crx3'}),
+                 dict(schema_version=1, version='156.0.0.1', platform='macos', architecture='arm64', channel='extended', source={'url': 'https://dl.google.com/mac.crx3'})]
+        _, body = publish.release_text('156.0.0.1', items)
+        name = archive.browser_asset_name('windows', 'x86', 'stable', '156.0.0.1')
+        restored = publish.existing_release_manifests({'tag_name': '156.0.0.1', 'body': body, 'assets': [{'name': name}]})
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(restored[0]['source']['url'], 'https://dl.google.com/windows.crx3')
+        self.assertEqual(restored[0]['architecture'], 'x86')
+
     def test_release_links_to_the_actual_official_source_and_deduplicates_rows(self):
         item = dict(schema_version=1, version='156.0.0.1', channel='stable', platform='windows', architecture='x86',
                     source={'url': 'https://dl.google.com/release2/chrome/version/payload.crx3'})

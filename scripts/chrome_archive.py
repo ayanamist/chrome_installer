@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import gzip
 import hashlib
 import json
-import lzma
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
@@ -15,10 +14,13 @@ import struct
 import subprocess
 import tarfile
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+
+from archive_logging import log_context, log_event, log_runtime, path_bytes, stage
 
 ENDPOINT = 'https://update.googleapis.com/service/update2/json'
 DEB_ROOT = 'https://dl.google.com/linux/chrome/deb/'
@@ -27,11 +29,17 @@ CHANNELS = {'stable': 'Stable', 'extended': 'Extended Stable'}
 ARCHITECTURES = {'windows': ('x86', 'x64', 'arm64'),
                  'macos': ('x64', 'arm64'), 'linux': ('x64', 'arm64')}
 VERSION = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
+DOWNLOAD_PROGRESS_SECONDS = 15
 
 
 def validate_target(platform, arch):
     if platform not in ARCHITECTURES or arch not in ARCHITECTURES[platform]:
         raise ValueError(f'Unsupported target: {platform}/{arch}')
+
+
+def browser_asset_name(platform, arch, channel, version):
+    suffix = '.7z' if platform == 'windows' else '.tar.xz'
+    return f'chrome-{platform}-{arch}-{channel}-{version}-browser{suffix}'
 
 
 def write_json(path, value):
@@ -110,18 +118,16 @@ class Offer:
         return f'chrome-{self.platform}-{self.arch}-{self.channel}-{self.version}'
 
     @property
-    def original_asset(self):
-        suffix = '.xz' if 'uncompressed' in self.original_name.lower() else ''
-        return f'{self.platform}-{self.arch}-{self.channel}-{self.original_name}{suffix}'
+    def browser_asset(self):
+        return browser_asset_name(self.platform, self.arch, self.channel, self.version)
 
     @property
-    def browser_asset(self):
-        return self.prefix + ('-browser.7z' if self.platform == 'windows' else '-browser.tar.xz')
+    def manifest_name(self):
+        return self.prefix + '-manifest.json'
 
     @property
     def asset_names(self):
-        return [self.original_asset, self.browser_asset,
-                self.prefix + '-manifest.json', self.prefix + '-SHA256SUMS']
+        return [self.browser_asset]
 
 
 def query_omaha(platform, arch, channel):
@@ -195,26 +201,41 @@ def download(offer, cache):
     cache.mkdir(parents=True, exist_ok=True)
     destination = cache / offer.package_name
     if destination.exists():
-        if destination.stat().st_size == offer.size and sha256(destination) == offer.digest:
-            return destination
-        raise ValueError(f'Cached package fails verification: {destination}')
+        with stage('verify_cached_package', file=destination, input_bytes=offer.size):
+            if destination.stat().st_size != offer.size or sha256(destination) != offer.digest:
+                raise ValueError(f'Cached package fails verification: {destination}')
+        log_event('cache_hit', file=destination)
+        return destination
     errors = []
     for url in offer.urls:
         partial = destination.with_suffix(destination.suffix + '.partial')
         try:
-            print(f'Downloading {offer.platform}/{offer.arch}/{offer.channel}: {url}', flush=True)
-            digest = hashlib.sha256()
-            count = 0
-            with OPENER.open(google_https(url), timeout=90) as response, partial.open('wb') as stream:
-                while chunk := response.read(1024**2):
-                    count += len(chunk)
-                    if count > offer.size:
-                        raise ValueError('Package exceeds advertised size')
-                    digest.update(chunk)
-                    stream.write(chunk)
-            if count != offer.size or digest.hexdigest() != offer.digest:
-                raise ValueError('Package size/SHA256 mismatch')
-            partial.replace(destination)
+            with stage('download', url=google_https(url), expected_bytes=offer.size, expected_sha256=offer.digest) as stats:
+                digest = hashlib.sha256()
+                count = 0
+                stats['downloaded_bytes'] = 0
+                started = last_progress = time.perf_counter()
+                with OPENER.open(url, timeout=90) as response, partial.open('wb') as stream:
+                    stats['http_status'] = getattr(response, 'status', None)
+                    while chunk := response.read(1024**2):
+                        count += len(chunk)
+                        stats['downloaded_bytes'] = count
+                        if count > offer.size:
+                            raise ValueError('Package exceeds advertised size')
+                        digest.update(chunk)
+                        stream.write(chunk)
+                        now = time.perf_counter()
+                        if now - last_progress >= DOWNLOAD_PROGRESS_SECONDS:
+                            log_event('download_progress', downloaded_bytes=count, total_bytes=offer.size,
+                                      percent=round(count * 100 / offer.size, 1),
+                                      average_MiB_per_second=round(count / 1024**2 / max(now - started, 0.001), 2))
+                            last_progress = now
+                stats['actual_sha256'] = digest.hexdigest()
+                if count != offer.size or stats['actual_sha256'] != offer.digest:
+                    raise ValueError('Package size/SHA256 mismatch')
+                partial.replace(destination)
+                stats.update(downloaded_bytes=count, sha256_verified=True,
+                             average_MiB_per_second=round(count / 1024**2 / max(time.perf_counter() - started, 0.001), 2))
             return destination
         except Exception as error:
             partial.unlink(missing_ok=True)
@@ -287,17 +308,12 @@ def seven_zip(command, *args, cwd=None):
 
 
 def compress(command, source, destination):
-    seven_zip(command, 'a', '-t7z', '-mx=5', '-mmt=2', '-snl', '-mtm=off', '-mta=off', '-mtc=off',
-              destination.resolve(), source.name, cwd=source.parent)
-    seven_zip(command, 't', destination.resolve())
-
-
-def compress_file_xz(source, destination):
-    with source.open('rb') as input_file, lzma.open(destination, 'wb', preset=6) as output:
-        shutil.copyfileobj(input_file, output, 1024**2)
-    with lzma.open(destination, 'rb') as restored:
-        if hashlib.file_digest(restored, 'sha256').hexdigest() != sha256(source):
-            raise ValueError('XZ round-trip verification failed')
+    with stage('compress_7z', input_bytes=path_bytes(source), level=5, threads=2, output=destination) as stats:
+        seven_zip(command, 'a', '-t7z', '-mx=5', '-mmt=2', '-snl', '-mtm=off', '-mta=off', '-mtc=off',
+                  destination.resolve(), source.name, cwd=source.parent)
+        stats['output_bytes'] = destination.stat().st_size
+    with stage('verify_7z', file=destination, input_bytes=destination.stat().st_size):
+        seven_zip(command, 't', destination.resolve())
 
 
 def compress_tar_xz(source, destination):
@@ -308,19 +324,26 @@ def compress_tar_xz(source, destination):
         info.mtime = 0
         info.pax_headers = {}
         return info
-    with tarfile.open(destination, 'w:xz', preset=6, dereference=False) as archive:
-        archive.add(source, arcname=source.name, filter=normalize)
+    with stage('compress_browser_tar_xz', input_bytes=path_bytes(source), preset=6, output=destination) as stats:
+        with tarfile.open(destination, 'w:xz', preset=6, dereference=False) as archive:
+            archive.add(source, arcname=source.name, filter=normalize)
+        stats['output_bytes'] = destination.stat().st_size
     # Read every member to the end to verify XZ checksum and archive contents.
-    with tarfile.open(destination, 'r:xz') as archive:
-        for member in archive:
-            if member.isfile():
-                with archive.extractfile(member) as stream:
-                    expected = sha256(source.parent / member.name)
-                    if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
-                        raise ValueError('tar.xz round-trip verification failed')
-            elif member.issym():
-                if os.readlink(source.parent / member.name) != member.linkname:
-                    raise ValueError('tar.xz symlink verification failed')
+    with stage('verify_browser_tar_xz', file=destination, input_bytes=destination.stat().st_size) as stats:
+        files = links = 0
+        with tarfile.open(destination, 'r:xz') as archive:
+            for member in archive:
+                if member.isfile():
+                    with archive.extractfile(member) as stream:
+                        expected = sha256(source.parent / member.name)
+                        if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
+                            raise ValueError('tar.xz round-trip verification failed')
+                    files += 1
+                elif member.issym():
+                    if os.readlink(source.parent / member.name) != member.linkname:
+                        raise ValueError('tar.xz symlink verification failed')
+                    links += 1
+        stats.update(verified_files=files, verified_symlinks=links)
 
 
 def verify_pe_version(path, version, command):
@@ -395,66 +418,71 @@ def build(offer, package, output, command):
     with tempfile.TemporaryDirectory(prefix='.chrome-archive-', dir=output.resolve().parent) as directory:
         workspace = Path(directory)
         if offer.platform == 'windows':
-            validate_crx(package)
             original = workspace / offer.original_name
-            with zipfile.ZipFile(package) as archive:
-                matches = [info for info in archive.infolist() if info.filename == offer.original_name]
-                if len(matches) != 1:
-                    raise ValueError('Expected one manifest installer')
-                with archive.open(matches[0]) as source, original.open('wb') as destination:
-                    shutil.copyfileobj(source, destination)
-            verify_pe_version(original, offer.version, command)
+            with stage('extract_installer', package=package, input_bytes=package.stat().st_size) as stats:
+                validate_crx(package)
+                with zipfile.ZipFile(package) as archive:
+                    matches = [info for info in archive.infolist() if info.filename == offer.original_name]
+                    if len(matches) != 1:
+                        raise ValueError('Expected one manifest installer')
+                    with archive.open(matches[0]) as source, original.open('wb') as destination:
+                        shutil.copyfileobj(source, destination)
+                stats['output_bytes'] = original.stat().st_size
+            with stage('verify_pe_version', file=original):
+                verify_pe_version(original, offer.version, command)
             payload = workspace / 'payload'
-            seven_zip(command, 'x', original, '-o' + str(payload), '-y')
+            with stage('extract_browser', input_bytes=original.stat().st_size) as stats:
+                seven_zip(command, 'x', original, '-o' + str(payload), '-y')
+                stats['output_bytes'] = path_bytes(payload)
             browser = payload / 'Chrome-bin'
             executable = browser / 'chrome.exe'
             if not (browser / offer.version / 'chrome.dll').is_file():
                 raise ValueError('Chrome payload version directory missing')
         elif offer.platform == 'macos':
-            original = package
             payload = workspace / 'payload'
-            extract_app_zip(package, payload)
+            with stage('extract_app_bundle', input_bytes=package.stat().st_size) as stats:
+                extract_app_zip(package, payload)
+                stats['output_bytes'] = path_bytes(payload)
             apps = list(payload.glob('*.app'))
             if len(apps) != 1:
                 raise ValueError('Expected one macOS app bundle')
             browser = apps[0]
             executable = browser / 'Contents/MacOS/Google Chrome'
-            info = plistlib.loads((browser / 'Contents/Info.plist').read_bytes())
-            if info.get('CFBundleShortVersionString') != offer.version:
-                raise ValueError('macOS bundle version differs from manifest')
+            with stage('verify_bundle_version'):
+                info = plistlib.loads((browser / 'Contents/Info.plist').read_bytes())
+                if info.get('CFBundleShortVersionString') != offer.version:
+                    raise ValueError('macOS bundle version differs from manifest')
         else:
-            original = package
-            browser = extract_deb(package, workspace, command)
+            with stage('extract_deb_payload', input_bytes=package.stat().st_size) as stats:
+                browser = extract_deb(package, workspace, command)
+                stats['output_bytes'] = path_bytes(browser)
             executable = browser / 'chrome'
-        validate_binary_arch(executable, offer.platform, offer.arch)
-        original_target = assets / offer.original_asset
-        if 'uncompressed' in offer.original_name.lower():
-            compress_file_xz(original, original_target)
-        else:
-            shutil.copyfile(original, original_target)
+        with stage('verify_binary_architecture', file=executable):
+            validate_binary_arch(executable, offer.platform, offer.arch)
         browser_target = assets / offer.browser_asset
         if offer.platform == 'windows':
             compress(command, browser, browser_target)
         else:
             compress_tar_xz(browser, browser_target)
+        with stage('hash_browser_archive', file=browser_target, input_bytes=browser_target.stat().st_size):
+            browser_hash = sha256(browser_target)
         metadata = {'schema_version': 1, 'version': offer.version,
                     'channel': offer.channel, 'channel_name': CHANNELS[offer.channel],
                     'platform': offer.platform, 'architecture': offer.arch,
                     'source': {'url': offer.urls[0], 'package': offer.package_name,
                                'sha256': offer.digest, 'size': offer.size,
                                'original_name': offer.original_name, 'arguments_not_executed': offer.arguments},
-                    'original_file_sha256': sha256(original),
                     'native_signature_verification': 'not performed; package SHA256 verified against official HTTPS manifest',
                     'binary_architecture_verified': True,
                     'installer_executed': False,
-                    'files': [{'name': path.name, 'size': path.stat().st_size, 'sha256': sha256(path)}
-                              for path in (original_target, browser_target)]}
-        manifest_target = assets / (offer.prefix + '-manifest.json')
+                    'files': [{'name': browser_target.name, 'size': browser_target.stat().st_size,
+                               'sha256': browser_hash}]}
+        manifest_target = assets / offer.manifest_name
         write_json(manifest_target, metadata)
-        checksum_target = assets / (offer.prefix + '-SHA256SUMS')
-        checksum_target.write_text(''.join(f'{sha256(path)}  {path.name}\n'
-                                         for path in (original_target, browser_target, manifest_target)), encoding='utf-8')
-    return [assets / name for name in offer.asset_names]
+        log_event('archive_ready', file=browser_target.name, bytes=browser_target.stat().st_size,
+                  sha256=browser_hash, official_source=offer.urls[0])
+    # The small manifest travels inside the temporary Actions artifact only.
+    return [browser_target, manifest_target]
 
 
 def main():
@@ -477,25 +505,32 @@ def main():
     if not args.query_only and not shutil.which(args.seven_zip):
         parser.error('7-Zip is required; install it before running this script')
     args.output.mkdir(parents=True, exist_ok=True)
+    log_runtime(seven_zip=args.seven_zip, xz_preset=6, seven_zip_level=5, seven_zip_threads=2)
     built = []
     channels = ['stable'] if args.platform == 'linux' else list(CHANNELS) if args.channel == 'all' else [args.channel]
     for channel in channels:
-        offer = query_linux(args.arch) if args.platform == 'linux' else query_omaha(args.platform, args.arch, channel)
-        print(json.dumps(offer.__dict__), flush=True)
-        if args.query_only:
-            continue
-        if args.repository:
-            release = get_release(args.repository, offer.version)
-            names = {asset['name'] for asset in release['assets']} if release else set()
-            if not (set(offer.asset_names) - names):
-                print(f'Already archived: {offer.prefix}', flush=True)
+        with log_context(platform=args.platform, architecture=args.arch, channel=channel):
+            with stage('query_official_manifest'):
+                offer = query_linux(args.arch) if args.platform == 'linux' else query_omaha(args.platform, args.arch, channel)
+            log_event('offer', **offer.__dict__)
+            if args.query_only:
                 continue
-        package = download(offer, args.cache)
-        built.extend(build(offer, package, args.output, args.seven_zip))
+            with log_context(version=offer.version):
+                with stage('channel_total'):
+                    if args.repository:
+                        with stage('check_existing_release'):
+                            release = get_release(args.repository, offer.version)
+                        names = {asset['name'] for asset in release['assets']} if release else set()
+                        if not (set(offer.asset_names) - names):
+                            log_event('already_archived', file=offer.browser_asset)
+                            continue
+                    package = download(offer, args.cache)
+                    built.extend(build(offer, package, args.output, args.seven_zip))
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
             stream.write(f'has_assets={str(bool(built)).lower()}\n')
-    print(f'Prepared {len(built)} release assets; no installers were executed.', flush=True)
+    log_event('archive_job_complete', release_assets=len(built) // 2, internal_manifests=len(built) // 2,
+              installers_executed=False)
 
 
 if __name__ == '__main__':
