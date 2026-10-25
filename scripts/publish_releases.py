@@ -9,6 +9,7 @@ import subprocess
 
 from chrome_archive import CHANNELS, VERSION, browser_asset_name, get_release, gh, google_https, sha256, validate_target
 from archive_logging import log_context, log_event, log_runtime, stage
+from linux_sources import rpm_sources
 
 
 def validate_manifest(value, version):
@@ -31,17 +32,37 @@ def release_text(version, manifests):
     body += 'Official Google download payloads, archived without executing an installer.\n\n'
     body += '| Channel | Platform | Architecture | Official original download |\n|---|---|---|---|\n'
     for channel, platform, arch in rows:
-        url = entries[(channel, platform, arch)].get('source', {}).get('url')
-        link = f'[Google original]({google_https(url)})' if url else '—'
+        source = entries[(channel, platform, arch)].get('source', {})
+        url = source.get('url')
+        label = 'DEB' if platform == 'linux' else 'Google original'
+        link = f'[{label}]({google_https(url)})' if url else '—'
+        if platform == 'linux' and source.get('rpm_url'):
+            link += f' · [RPM]({google_https(source["rpm_url"])})'
         body += f'| {CHANNELS[channel]} | {dict(windows="Windows", macos="macOS", linux="Linux")[platform]} | {arch.upper()} | {link} |\n'
     body += '\n## Assets\n\n'
     body += '- `*-browser.7z`: extracted Windows browser files.\n'
     body += '- `*-browser.tar.xz`: extracted macOS/Linux files, preserving Unix modes and symbolic links.\n'
-    body += '- Official original files are available from the Google links in the table above. Windows/macOS links point to the original updater CRX3; Linux links point to the original DEB.\n'
+    body += '- Official original files are available from the Google links in the table above. Windows/macOS links point to the original updater CRX3; Linux links point to the original DEB and, when available, the same-version RPM for that architecture.\n'
     body += '- Asset prefixes identify platform, architecture and channel.\n'
     body += '- Only the repacked browser archives are release attachments; original files and workflow metadata are not uploaded as release assets.\n\n'
     body += 'Linux has no official Extended Stable channel. Extracted archives do not install dependencies or updater integration.\n'
     return title, body
+
+
+def add_linux_rpm_links(manifests):
+    known = {(item['architecture'], item['version']): item['source']['rpm_url']
+             for item in manifests if item['platform'] == 'linux' and item.get('source', {}).get('rpm_url')}
+    result = []
+    for item in manifests:
+        if item['platform'] == 'linux' and not item.get('source', {}).get('rpm_url'):
+            with stage('query_matching_rpm', version=item['version'], architecture=item['architecture']):
+                url = known.get((item['architecture'], item['version'])) or rpm_sources(item['architecture']).get(item['version'])
+            if url:
+                item = dict(item, source={**item.get('source', {}), 'rpm_url': url})
+            else:
+                log_event('matching_rpm_unavailable', version=item['version'], architecture=item['architecture'])
+        result.append(item)
+    return result
 
 
 def local_groups(root):
@@ -66,15 +87,17 @@ def local_groups(root):
 
 def existing_release_manifests(release):
     """The published table retains provenance; no metadata release assets needed."""
-    pattern = re.compile(r'^\|\s*(Stable|Extended Stable)\s*\|\s*(Windows|macOS|Linux)\s*\|\s*(X86|X64|ARM64)\s*\|\s*\[Google original\]\((https://[^\s)]+)\)\s*\|\s*$', re.M)
+    pattern = re.compile(r'^\|\s*(Stable|Extended Stable)\s*\|\s*(Windows|macOS|Linux)\s*\|\s*(X86|X64|ARM64)\s*\|\s*\[(?:Google original|DEB)\]\((https://[^\s)]+)\)(?:\s*·\s*\[RPM\]\((https://[^\s)]+)\))?\s*\|\s*$', re.M)
     platforms = {'Windows': 'windows', 'macOS': 'macos', 'Linux': 'linux'}
     channels = {name: channel for channel, name in CHANNELS.items()}
     assets = {asset['name'] for asset in release['assets']}
     items = []
-    for channel, platform, arch, url in pattern.findall(release.get('body') or ''):
+    for channel, platform, arch, url, rpm_url in pattern.findall(release.get('body') or ''):
         item = validate_manifest({'schema_version': 1, 'version': release['tag_name'],
                                   'channel': channels[channel], 'platform': platforms[platform],
                                   'architecture': arch.lower(), 'source': {'url': google_https(url)}}, release['tag_name'])
+        if rpm_url:
+            item['source']['rpm_url'] = google_https(rpm_url)
         if browser_asset_name(item['platform'], item['architecture'], item['channel'], item['version']) in assets:
             items.append(item)
     return items
@@ -89,7 +112,8 @@ def publish(repository, target, root):
         with stage('read_existing_release', version=version):
             release = get_release(repository, version)
         existing_manifests = existing_release_manifests(release) if release else []
-        title, body = release_text(version, [*existing_manifests, *group['manifests']])
+        manifests = add_linux_rpm_links([*existing_manifests, *group['manifests']])
+        title, body = release_text(version, manifests)
         if not release:
             release = gh('api', f'repos/{repository}/releases', '--method', 'POST', '--input', '-',
                          data={'tag_name': version, 'target_commitish': target, 'name': title,
@@ -130,7 +154,7 @@ def main():
     log_runtime(role='publish')
     if args.preview:
         for version, group in local_groups(args.input).items():
-            title, body = release_text(version, group['manifests'])
+            title, body = release_text(version, add_linux_rpm_links(group['manifests']))
             print(title + '\n\n' + body)
     else:
         publish(args.repository, args.target, args.input)

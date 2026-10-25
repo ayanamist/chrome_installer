@@ -33,16 +33,18 @@
 - DEB 仅作为临时下载输入；只解出 data archive 内 `opt/google/chrome` 的浏览器文件，保留源文件权限和符号链接，不执行任何包管理脚本。
 - 读取 ELF 头核对目标架构，不运行浏览器以读取版本。
 - 不制造 Linux Extended Stable 产物，因为官方没有该通道。
+- 发布阶段读取官方 YUM `repomd.xml` 和 `primary.xml.gz`，核对压缩索引大小及 SHA-256，只为 `google-chrome-stable` 的同版本、同架构补充固定版本 RPM URL。无匹配时省略，不回退到 `current` 浮动链接，不下载／执行／上传 RPM。
+- 增量发布保留已有 RPM 来源链接；历史版本即使已退出当前 YUM 索引，也不丢失已记录的地址。
 
 来源：[官方安装平台与架构](https://support.google.com/chrome/answer/95346?hl=en)、[x64 仓库索引](https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-amd64/Packages.gz)、[ARM64 仓库索引](https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages.gz)。
 
-限制：校验 HTTPS 清单的包大小和 SHA-256，没有重建 apt 的 InRelease/GPG 信任链。只覆盖 DEB，不额外归档 RPM。
+限制：校验 HTTPS 清单的包大小和 SHA-256，没有重建 apt 的 InRelease/GPG 信任链。浏览器文件只从 DEB 提取；RPM 只记录链接。YUM 索引通过 HTTPS 获取并校验 primary 的清单哈希，没有验证 RPM GPG 签名，也不保证 Google 永久保留历史下载 URL。
 
 ## 发布约定
 
 Tag 始终为官方响应的四段 Chrome 版本号，不包含通道、平台或架构。GitHub 同一 tag 只有一个 Release，因此同版本的所有成功归档组合共用 Release。标题列出实际通道，描述列出实际覆盖的通道、平台、架构，以及 manifest 中记录的 Google 官方原始下载 URL。纯文件产物由构建 job 生成，统一发布 job 串行处理，避免矩阵任务争抢同一个 tag。
 
-每个组合只上传解包后重新生成的 Windows browser.7z 或 macOS／Linux browser.tar.xz。原始 EXE、EXE.xz、CRX3、DEB、manifest 和 SHA256SUMS 都不是 Release 附件。官方原始 URL 放在 Release 描述的来源表中。manifest 仅在临时工作流 artifact 内流转，集中发布后不作为独立公开文件保留；后续发布从已有说明表恢复来源及覆盖范围，并核对对应浏览器附件确实存在。GitHub Actions 临时 artifact 不作为长期存储；最终存储位置是 Release assets。仅在全部附件上传成功后发布新 draft；重试补充缺失附件，不覆盖已有文件。
+每个组合只上传解包后重新生成的 Windows browser.7z 或 macOS／Linux browser.tar.xz。原始 EXE、EXE.xz、CRX3、DEB、RPM、manifest 和 SHA256SUMS 都不是 Release 附件。官方原始 URL 放在 Release 描述的来源表中。manifest 仅在临时工作流 artifact 内流转，集中发布后不作为独立公开文件保留；后续发布从已有说明表恢复来源及覆盖范围，并核对对应浏览器附件确实存在。GitHub Actions 临时 artifact 不作为长期存储；最终存储位置是 Release assets。仅在全部附件上传成功后发布新 draft；重试补充缺失附件，不覆盖已有文件。
 
 可用以下命令验证实现和生成的描述：
 
@@ -78,3 +80,5 @@ Workflow 使用官方维护的大版本 tag，自动跟随该大版本内的兼�
 阶段日志包含 UTC 时间、版本／平台／架构／通道、事件名、`wall_seconds`、`self_cpu_seconds`、`finished_children_cpu_seconds`。最后一项只累计已结束的子进程，适合在 stage_end 判断 7-Zip CPU 成本。长阶段每 30 秒输出心跳，下载每 15 秒记录进度和平均速率；失败事件明确标记阶段及异常类型。日志字段中的 token／password／authorization／cookie 等敏感键会被脱敏，不转储环境变量或请求头。
 
 2026-10-25 的[首轮任务 40177246723](https://github.com/ayanamist/chrome_installer/actions/runs/40177246723)（提交 5fa3743、旧发布范围）已经成功完成：七个归档 job 为 2:29～12:54，其中 Windows x86 9:59、macOS ARM64 11:33。旧日志将两个通道串行的下载／校验／解包／压缩合并在同一步，不能由该时长推断纯下载耗时。因此新版本先补阶段计时，不根据本地基准推断 runner 瓶颈，也不擅自调整压缩级别。原始 EXE 的额外压缩因发布范围调整已移除。
+
+2026-10-25 的[带阶段日志任务 40180189315](https://github.com/ayanamist/chrome_installer/actions/runs/40180189315)已完成，发布 3 个 Release、12 个浏览器归档，未上传原包或元数据附件。runner 实测：Linux x64 下载 0.762 秒、tar.xz 压缩 171.689 秒（self CPU 171.360 秒）；macOS x64 Stable 下载 4.978 秒、tar.xz 压缩 309.056 秒（self CPU 309.026 秒）；Windows x64 Stable 下载 2.232 秒、7z 压缩 115.706 秒（已结束子进程 CPU 174.67 秒）。这些组合的主要耗时为 CPU 压缩，两个通道在同一 job 内串行；结论仅对应这次 runner 实测，压缩参数尚未调整。

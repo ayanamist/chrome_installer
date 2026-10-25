@@ -10,7 +10,7 @@
 | macOS | x64、ARM64 | ✓ | ✓ | updater 的原始 CRX3 |
 | Linux | x64、ARM64 | ✓ | 官方不提供 | 官方 APT 仓库的 `.deb` |
 
-共 12 个平台／架构／通道组合。版本取自各平台、各架构实际的官方响应，可能因发布进度或灰度不同而不一致。Linux 仅归档 DEB；暂不额外归档 RPM。
+共 12 个平台／架构／通道组合。版本取自各平台、各架构实际的官方响应，可能因发布进度或灰度不同而不一致。Linux 浏览器归档从 DEB 提取；Release 说明另附 YUM 清单中同版本、同架构的官方 RPM 链接，不上传 RPM 附件。
 
 ## 自动执行
 
@@ -27,7 +27,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 - tag 使用**纯四段版本号**，例如 `156.0.8078.48`。
 - Release 名称为 `156.0.8078.48 · Stable` 或 `152.0.7977.169 · Extended Stable`。
 - 同一版本出现在两个通道时，共用一个 tag 和 Release，名称为 `版本号 · Stable / Extended Stable`。
-- Release 描述依据已上传的浏览器归档及内部来源元数据，列出通道、平台、架构及对应的 Google 官方原包下载链接（CRX3／DEB）。
+- Release 描述依据已上传的浏览器归档及内部来源元数据，列出通道、平台、架构及对应的 Google 官方原包下载链接（CRX3／DEB，以及匹配版本的 RPM）。
 - 已存在且附件齐全的组合直接跳过，不重复下载或重新压缩；新增平台、架构或通道会补充到现有版本。
 - 不覆盖已有版本的附件。重试遇到同名不同哈希的附件会报错，避免静默替换已归档的内容。
 - 新 Release 先作为 draft 创建，全部附件上传成功后才发布。失败的 draft 可由下次执行继续补齐。
@@ -40,7 +40,7 @@ GitHub 的定时任务可能排队或延迟，只对默认分支生效；公共�
 | macOS | `chrome-macos-arm64-stable-156.0.8078.47-browser.tar.xz` |
 | Linux | `chrome-linux-x64-stable-156.0.8078.47-browser.tar.xz` |
 
-官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows/macOS 为 updater 原始 CRX3，Linux 为原始 DEB。
+官方原包不作为 Release 附件上传。需要原始文件时，从 Release 描述中对应通道、平台、架构的 Google 官方链接下载：Windows/macOS 为 updater 原始 CRX3，Linux 为原始 DEB 及匹配版本、架构的 RPM。若 YUM 仓库尚未提供对应版本，则省略 RPM 链接并记录日志，不使用会变化的 `current` 地址。
 
 manifest 只作为工作流内部中间数据，用于校验归档及生成 Release 说明，不作为 Release 附件；不上传原始 EXE、EXE 的 XZ、CRX3、DEB、JSON 或 SHA256SUMS。后续增量发布从现有 Release 的来源表恢复已覆盖组合，无需保留公开的元数据文件。
 

@@ -11,6 +11,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import chrome_archive as archive
 import publish_releases as publish
+import linux_sources
 
 
 def offer(**changes):
@@ -154,6 +155,26 @@ class SourceTests(unittest.TestCase):
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_linux_rpm_links_match_version_and_survive_incremental_release(self):
+        version = '156.0.0.1'
+        item = dict(schema_version=1, version=version, channel='stable', platform='linux', architecture='arm64',
+                    source={'url': 'https://dl.google.com/chrome_156.0.0.1_arm64.deb'})
+        rpm = 'https://dl.google.com/google-chrome-stable-156.0.0.1-1.aarch64.rpm'
+        with patch.object(publish, 'rpm_sources', return_value={version: rpm}):
+            enriched = publish.add_linux_rpm_links([item])
+        _, body = publish.release_text(version, enriched)
+        self.assertIn('[DEB](' + item['source']['url'] + ') · [RPM](' + rpm + ')', body)
+        restored = publish.existing_release_manifests(dict(tag_name=version, body=body,
+                    assets=[{'name': archive.browser_asset_name('linux', 'arm64', 'stable', version)}]))
+        self.assertEqual(restored[0]['source']['rpm_url'], rpm)
+        with patch.object(publish, 'rpm_sources', side_effect=AssertionError('Existing provenance must be retained')):
+            repeated = publish.add_linux_rpm_links([*restored, item])
+        self.assertEqual(repeated[-1]['source']['rpm_url'], rpm)
+        with patch.object(publish, 'rpm_sources', return_value={'157.0.0.1': rpm}):
+            missing = publish.add_linux_rpm_links([item])
+        self.assertNotIn('rpm_url', missing[0]['source'])
+        self.assertNotIn('[RPM]', publish.release_text(version, missing)[1])
+
     def test_only_browser_archive_is_uploaded_even_with_legacy_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
