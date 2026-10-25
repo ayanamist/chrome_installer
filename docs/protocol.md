@@ -59,13 +59,15 @@ Actions 的时间和默认分支语义依据 [GitHub schedule 文档](https://do
 
 ## GitHub Actions 依赖版本
 
-Workflow 使用官方稳定发布的版本 tag，不固定 commit hash。更新时通过对应仓库的 `releases/latest` 核对版本，并检查 action.yml 输入兼容性。以下是 2026-10-25 实查的最新稳定发布：
+Workflow 使用官方维护的大版本 tag，自动跟随该大版本内的兼容更新，不固定小版本号或 commit hash。大版本升级时通过对应仓库的 `releases/latest` 核对最新稳定大版本，并检查 action.yml 输入兼容性。
 
-| Action | 版本 tag | 官方 release |
+2026-10-25 已确认以下大版本 tag 与对应的最新稳定发布指向同一提交：
+
+| Action | Workflow 使用的大版本 tag | 本次核对的最新稳定发布 |
 |---|---|---|
-| actions/checkout | v7.0.1 | https://github.com/actions/checkout/releases/tag/v7.0.1 |
-| actions/setup-python | v7.1.0 | https://github.com/actions/setup-python/releases/tag/v7.1.0 |
-| actions/upload-artifact | v7.0.2 | https://github.com/actions/upload-artifact/releases/tag/v7.0.2 |
-| actions/download-artifact | v8.0.2 | https://github.com/actions/download-artifact/releases/tag/v8.0.2 |
+| actions/checkout | v7 | [v7.0.1](https://github.com/actions/checkout/releases/tag/v7.0.1) |
+| actions/setup-python | v7 | [v7.1.0](https://github.com/actions/setup-python/releases/tag/v7.1.0) |
+| actions/upload-artifact | v7 | [v7.0.2](https://github.com/actions/upload-artifact/releases/tag/v7.0.2) |
+| actions/download-artifact | v8 | [v8.0.2](https://github.com/actions/download-artifact/releases/tag/v8.0.2) |
 
 以上四个 Action 都使用 Node 24，Ubuntu 24.04 的 GitHub hosted runner 支持该运行环境。upload-artifact 保持 archive=true 的默认行为，download-artifact 使用 merge-multiple=true；不改变现有目录布局和中间 artifact 语义。
