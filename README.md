@@ -12,6 +12,22 @@
 
 共 12 个平台／架构／通道组合。版本取自各平台、各架构实际的官方响应，可能因发布进度或灰度不同而不一致。Linux 浏览器归档从 DEB 提取；Release 说明另附 YUM 清单中同版本、同架构的官方 RPM 链接，不上传 RPM 附件。
 
+## 当前 Release 页面
+
+下表由 GitHub Actions 在每次发布后自动更新，列出每个平台、架构、通道最近一次查询到的版本及对应 Release 页面。Linux 官方不提供 Extended Stable。
+
+<!-- releases:start -->
+| 平台 | 架构 | Stable | Extended Stable |
+|---|---|---|---|
+| Windows | X86 | — | — |
+| Windows | X64 | — | — |
+| Windows | ARM64 | — | — |
+| macOS | X64 | — | — |
+| macOS | ARM64 | — | — |
+| Linux | X64 | — | 官方不提供 |
+| Linux | ARM64 | — | 官方不提供 |
+<!-- releases:end -->
+
 ## 自动执行
 
 `.github/workflows/archive.yml` 在每天 **04:31（Asia/Singapore，UTC+8）**执行，也支持 Actions 页手动执行。`main` 上脚本、测试或 workflow 的变更会触发执行；Pull Request 只跑测试。

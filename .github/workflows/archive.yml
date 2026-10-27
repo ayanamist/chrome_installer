@@ -80,7 +80,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          # The token is reused to push the README update below.
+          persist-credentials: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -93,3 +94,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/publish_releases.py --input dist
+      - name: Update README release links
+        if: github.ref == 'refs/heads/main'
+        run: |
+          python scripts/update_readme.py --input dist
+          if git diff --quiet -- README.md; then
+            echo 'README release links are up to date.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md
+          git commit -m 'Update README release links [skip ci]'
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main
