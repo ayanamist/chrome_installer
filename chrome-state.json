@@ -8,34 +8,54 @@
       "version": "156.0.8078.73"
     },
     "macos/arm64/extended": {
-      "version": "156.0.8078.48"
+      "version": "156.0.8078.48",
+      "cohort": "1:z69:3x79@0.25",
+      "cohortname": "Extended Stable"
     },
     "macos/arm64/stable": {
-      "version": "156.0.8078.73"
+      "version": "156.0.8078.73",
+      "cohort": "1:1y5:3x6r@0.5",
+      "cohortname": "Stable"
     },
     "macos/x64/extended": {
-      "version": "156.0.8078.74"
+      "version": "156.0.8078.74",
+      "cohort": "1:z69:3x79@0.25",
+      "cohortname": "Extended Stable"
     },
     "macos/x64/stable": {
-      "version": "156.0.8078.49"
+      "version": "156.0.8078.49",
+      "cohort": "1:1y5/3x6r/3x73:",
+      "cohortname": "Control"
     },
     "windows/arm64/extended": {
-      "version": "156.0.8078.48"
+      "version": "156.0.8078.74",
+      "cohort": "1:z63/3x6l:",
+      "cohortname": "156.0.8078.73 Rollout"
     },
     "windows/arm64/stable": {
-      "version": "156.0.8078.74"
+      "version": "156.0.8078.74",
+      "cohort": "1:gu/i19:",
+      "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x64/extended": {
-      "version": "156.0.8078.74"
+      "version": "156.0.8078.74",
+      "cohort": "1:z63/3x6l:",
+      "cohortname": "156.0.8078.73 Rollout"
     },
     "windows/x64/stable": {
-      "version": "156.0.8078.74"
+      "version": "156.0.8078.74",
+      "cohort": "1:gu/i19:",
+      "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x86/extended": {
-      "version": "156.0.8078.48"
+      "version": "156.0.8078.48",
+      "cohort": "1:z63:3x6l@0.25",
+      "cohortname": "Extended Stable"
     },
     "windows/x86/stable": {
-      "version": "156.0.8078.74"
+      "version": "156.0.8078.74",
+      "cohort": "1:gu/i19:",
+      "cohortname": "Stable Installs & Version Pins"
     }
   }
 }
