@@ -2,8 +2,8 @@ name: Archive Chrome releases
 
 on:
   schedule:
-    # 04:31 Asia/Singapore (UTC+8), every day.
-    - cron: '31 20 * * *'
+    # 11:31 UTC, every day.
+    - cron: '31 11 * * *'
   workflow_dispatch:
   push:
     branches: [main]
