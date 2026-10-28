@@ -34,9 +34,11 @@ class UpdateReadmeTests(unittest.TestCase):
             root = Path(directory)
             self.discovery(root, 'macos', 'x64', {'stable': '156.0.1.4'})
             path = root / 'README.md'
-            path.write_text(README.read_text(encoding='utf-8').replace(
-                '| macOS | ARM64 | — | — |',
-                '| macOS | ARM64 | [155.0.0.1](https://github.com/o/r/releases/tag/155.0.0.1) | — |'), encoding='utf-8')
+            text = README.read_text(encoding='utf-8')
+            head, rest = text.split(readme.START, 1)
+            tail = rest.split(readme.END, 1)[1]
+            table = readme.release_table('o/r', {('macos', 'arm64'): {'stable': '155.0.0.1'}})
+            path.write_text(f'{head}{readme.START}\n{table}\n{readme.END}{tail}', encoding='utf-8')
             sys.argv = ['update_readme.py', '--input', str(root), '--readme', str(path), '--repository', 'o/r']
             readme.main()
             text = path.read_text(encoding='utf-8')
