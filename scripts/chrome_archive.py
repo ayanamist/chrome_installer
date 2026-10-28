@@ -23,6 +23,7 @@ import zipfile
 from archive_logging import log_context, log_event, log_runtime, path_bytes, stage
 from release_metadata import (CHANNELS, ARCHITECTURES, VERSION, browser_asset_name, compact_manifest,
                               existing_release_manifests, google_https, manifest_asset_name, validate_target)
+from updater_state import COHORT_FIELDS, read_state, validate_entry
 
 ENDPOINT = 'https://update.googleapis.com/service/update2/json'
 DEB_ROOT = 'https://dl.google.com/linux/chrome/deb/'
@@ -110,14 +111,18 @@ class Offer:
         return [self.browser_asset]
 
 
-def query_omaha(platform, arch, channel, *, target_version=None, allow_no_update=False):
+def query_omaha(platform, arch, channel, *, target_version=None, allow_no_update=False, state=None):
     validate_target(platform, arch)
     if platform not in ('windows', 'macos') or channel not in CHANNELS:
         raise ValueError('Unsupported Omaha target')
     os_name = 'win' if platform == 'windows' else 'mac'
     app_id = '{8A69D345-D564-463C-AFF1-A69D9E530F96}' if platform == 'windows' else 'com.google.Chrome'
-    app = {'appid': app_id, 'version': '0.0.0.0', 'release_channel': channel,
-           'installsource': 'taggedmi', 'updatecheck': {'sameversionupdate': True}}
+    state = state if state is not None else {}
+    current = state.get('version', '0.0.0.0')
+    validate_entry(f'{platform}/{arch}/{channel}', {**state, 'version': current})
+    app = {'appid': app_id, 'version': current, 'release_channel': channel,
+           'installsource': 'taggedmi', 'updatecheck': {'sameversionupdate': current == '0.0.0.0'}}
+    app.update({field: state[field] for field in COHORT_FIELDS if field in state})
     if target_version is not None:
         if not VERSION.fullmatch(target_version):
             raise ValueError('Invalid target version')
@@ -138,6 +143,10 @@ def query_omaha(platform, arch, channel, *, target_version=None, allow_no_update
     if answer.get('appid', '').lower() != app_id.lower() or answer.get('status') != 'ok':
         raise RuntimeError(f'Unexpected Omaha response: {answer}')
     update = answer.get('updatecheck', {})
+    if update.get('status') in ('ok', 'noupdate'):
+        cohort = {field: answer[field] for field in COHORT_FIELDS if field in answer}
+        validate_entry(f'{platform}/{arch}/{channel}', {'version': current, **cohort})
+        state.update(cohort)
     if allow_no_update and update.get('status') == 'noupdate':
         return None
     if update.get('status') != 'ok':
@@ -476,6 +485,7 @@ def main():
     parser.add_argument('--cache', type=Path, default=Path('.cache/packages'))
     parser.add_argument('--seven-zip', default='7z' if os.name == 'nt' else '7zz')
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'))
+    parser.add_argument('--state', type=Path, help='Read persistent update state; candidates go into discovery only')
     parser.add_argument('--query-only', action='store_true')
     args = parser.parse_args()
     try:
@@ -490,6 +500,8 @@ def main():
     log_runtime(seven_zip=args.seven_zip, xz_preset=6, seven_zip_level=5, seven_zip_threads=2)
     built = []
     discovered = {}
+    saved_state = read_state(args.state)
+    state_updates = {}
     reused = []
     releases = {}
     available = []
@@ -497,10 +509,26 @@ def main():
     channels = ['stable'] if args.platform == 'linux' else list(CHANNELS) if args.channel == 'all' else [args.channel]
     for channel in channels:
         with log_context(platform=args.platform, architecture=args.arch, channel=channel):
+            entry = dict(saved_state.get(f'{args.platform}/{args.arch}/{channel}', {}))
+            current = entry.get('version', '0.0.0.0')
             with stage('query_official_manifest'):
-                offer = query_linux(args.arch) if args.platform == 'linux' else query_omaha(args.platform, args.arch, channel)
+                if args.platform == 'linux':
+                    offer = query_linux(args.arch)
+                elif args.state:
+                    offer = query_omaha(args.platform, args.arch, channel, state=entry, allow_no_update=True)
+                else:
+                    offer = query_omaha(args.platform, args.arch, channel)
+            if offer is None or tuple(map(int, offer.version.split('.'))) < tuple(map(int, current.split('.'))):
+                if current == '0.0.0.0':
+                    raise RuntimeError('No update offered and no previously archived version is recorded')
+                log_event('updater_no_update', version=current,
+                          offered_version=offer.version if offer else None)
+                discovered[channel] = current
+                state_updates[channel] = dict(entry, version=current)
+                continue
             log_event('offer', **offer.__dict__)
             discovered[channel] = offer.version
+            state_updates[channel] = dict(entry, version=offer.version)
             if args.query_only:
                 continue
             with log_context(version=offer.version):
@@ -549,7 +577,8 @@ def main():
                     reserved.add(offer.browser_asset)
     write_json(args.output / f'chrome-{args.platform}-{args.arch}-discovery.json',
                {'schema_version': 1, 'platform': args.platform, 'architecture': args.arch,
-                'channels': discovered, 'manifests': reused})
+                'channels': discovered, 'manifests': reused,
+                **({'updater_state': state_updates} if args.state else {})})
     log_event('versions_discovered', platform=args.platform, architecture=args.arch, channels=discovered)
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:

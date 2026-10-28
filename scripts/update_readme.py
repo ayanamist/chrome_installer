@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the README table of current Release pages from this run's discovery records."""
+"""Advance the README Release links from this run's discovery records."""
 import argparse
 import json
 import os
@@ -7,6 +7,7 @@ from pathlib import Path
 
 from archive_logging import log_event
 from release_metadata import ARCHITECTURES, CHANNELS, VERSION, validate_target
+from updater_state import read_state, state_versions
 
 START = '<!-- releases:start -->'
 END = '<!-- releases:end -->'
@@ -60,18 +61,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input', type=Path, default=Path('dist'))
     parser.add_argument('--readme', type=Path, default=Path('README.md'))
+    parser.add_argument('--state', type=Path, help='Render links from successfully published update state')
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'),
                         required=not bool(os.environ.get('GITHUB_REPOSITORY')))
     args = parser.parse_args()
-    discovered = read_discovery(args.input)
+    discovered = state_versions(read_state(args.state)) if args.state else read_discovery(args.input)
     if not discovered:
         log_event('readme_update_skipped', reason='no_discovery')
         return
     old = args.readme.read_text(encoding='utf-8')
-    # Keep rows for targets absent from this run unchanged rather than blanking them.
-    previous = parse_table(old, args.repository)
+    # Published JSON state is authoritative. Legacy discovery-only calls still
+    # retain higher links and channels absent from a partial run.
+    previous = {} if args.state else parse_table(old, args.repository)
     for key, channels in previous.items():
-        discovered.setdefault(key, channels)
+        current = discovered.setdefault(key, {})
+        for channel, version in channels.items():
+            offered = current.get(channel)
+            if offered is None or tuple(map(int, version.split('.'))) > tuple(map(int, offered.split('.'))):
+                if offered is not None:
+                    log_event('readme_version_regression_ignored', platform=key[0], architecture=key[1],
+                              channel=channel, offered_version=offered, retained_version=version)
+                current[channel] = version
     new = update_readme(old, release_table(args.repository, discovered))
     if new != old:
         args.readme.write_text(new, encoding='utf-8')

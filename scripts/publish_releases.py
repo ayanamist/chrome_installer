@@ -12,6 +12,7 @@ from release_metadata import (CHANNELS, VERSION, existing_release_manifests,
                               google_https, manifest_asset_name, metadata_comment, validate_manifest)
 from archive_logging import log_context, log_event, log_runtime, stage
 from linux_sources import rpm_sources
+from updater_state import merge_discovery, read_state, write_state
 
 
 def release_text(version, manifests):
@@ -276,6 +277,7 @@ def main():
     parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY'), required=not bool(os.environ.get('GITHUB_REPOSITORY')))
     parser.add_argument('--target', default=os.environ.get('GITHUB_SHA'))
     parser.add_argument('--preview', action='store_true', help='Print titles and coverage without writing to GitHub')
+    parser.add_argument('--state', type=Path, help='Update persistent state only after publication succeeds')
     args = parser.parse_args()
     log_runtime(role='publish')
     if args.preview:
@@ -283,9 +285,27 @@ def main():
             title, body = release_text(version, add_native_source_links(add_linux_rpm_links(group['manifests'])))
             print(title + '\n\n' + body)
     else:
+        targets = merge_discovery(read_state(args.state), args.input) if args.state else None
         versions = discovered_versions(args.input)
         versions.update(publish(args.repository, args.target, args.input))
         refresh_release_descriptions(args.repository, versions)
+        if args.state:
+            releases = {}
+            for key, entry in targets.items():
+                version = entry['version']
+                if version == '0.0.0.0':
+                    continue
+                if version not in releases:
+                    release = get_release(args.repository, version)
+                    if not release or release.get('draft'):
+                        raise ValueError(f'Updater state requires a published Release: {key}/{version}')
+                    releases[version] = existing_release_manifests(release)
+                platform, arch, channel = key.split('/')
+                if not any(item['platform'] == platform and item['architecture'] == arch
+                           and item['channel'] == channel and item['version'] == version
+                           for item in releases[version]):
+                    raise ValueError(f'Updater state requires an available browser archive: {key}/{version}')
+            write_state(args.state, targets)
 
 
 if __name__ == '__main__':

@@ -4,7 +4,7 @@
 
 ## Windows 和 macOS
 
-向 `https://update.googleapis.com/service/update2/json` 发送下载清单请求，`version=0.0.0.0` 用于获取完整安装 payload；显式传入 `release_channel=stable` 或 `extended`。这是独立的下载请求，不读取本机注册 token、设备标识或企业策略，也不注册 updater。
+向 `https://update.googleapis.com/service/update2/json` 发送下载清单请求，显式传入 `release_channel=stable` 或 `extended`。自动流程通过 `--state chrome-state.json` 发送对应目标已发布的版本及服务端 cohort，默认不请求同版本重装，正常接受 `noupdate`；无已知版本或不传状态文件的独立查询使用 `version=0.0.0.0`。新版本仍要求完整原生 payload。这是独立的归档客户端，不读取本机注册 token、设备标识或企业策略，也不注册 updater。
 
 - Windows app ID：`{8A69D345-D564-463C-AFF1-A69D9E530F96}`，AP 指定 `-arch_x86`／`-arch_x64`／`-arch_arm64`。
 - macOS app ID：`com.google.Chrome`，请求的 OS／arch 对应目标架构。
@@ -26,6 +26,58 @@
 - [Google 对 Extended Stable 平台范围的说明](https://support.google.com/chrome/a/answer/16942104?hl=en)
 
 限制：没有执行 Windows Authenticode 或 macOS codesign 原生签名验证。这是协议兼容的归档客户端，没有实现完整 updater 的 CUP 签名校验；SHA-256 来源通过 HTTPS 获取。服务器发布进度及灰度会影响实际提供的版本。原始 token 注册过程、安装、自动更新和浏览器启动均不在归档流程范围内。独立提供的可选本机 token 恢复工具见 [DM token 恢复约定](dm-token.md)，不打入浏览器归档。
+
+## Updater 的版本与 cohort 状态（2026-10-28）
+
+范围：核对 Chromium `157.0.8089.0` 的 updater／update_client 代码及 Omaha 3.1 协议，解释普通已安装客户端与本仓库独立归档查询的差异。下述结论来自固定版本官方源码；Google 更新服务的灰度分配算法不在这些客户端代码中，不能据此保证某个 cohort 始终获得同一版本。
+
+版本边界：该 tag 的 [`protocol_definition.h`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/protocol_definition.h#24) 已将客户端协议版本设为 `4.0`；本仓库仍使用 `3.1`。这里对照的是两者共有的版本／cohort 状态语义，并按 3.1 文档和实际服务响应验证项目请求，不将整套 4.0 序列化格式移植到 3.1 请求。
+
+普通更新请求携带当前已安装版本：[`Installer::MakeCrxComponentFromAppInfo()`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/chrome/updater/installer.cc#138) 将 `app_info_.version`、AP、目标 channel 和 rollback 策略交给 component；[`UpdateCheckerImpl`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/update_checker.cc#221) 再将这些字段连同已保存的 cohort 数据组成请求。协议明确 `app.version` 表示当前安装版本，成功安装后后续请求必须反映新版本；[切换到更旧通道时通常等待该通道追平，显式 `rollback_allowed` 才允许强制回退](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/docs/updater/protocol_3_1.md#359)。因此“同一安装通常不倒退”的判断应结合当前安装版本和 rollback 策略，不能只归因于固定用户标识。
+
+成功更新后的 [`Component::StateUpdated`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/component.cc#550) 才调用 `SetProductVersion()` 持久化新版本；[updater 的策略读取](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/chrome/updater/update_service_impl_impl.cc#174) 在未明确允许 rollback 时使用 `false`。Windows Chrome 安装器还有另一层检查：[已有安装版本高于待安装版本、且未允许 downgrade 时返回 `HIGHER_VERSION_EXISTS`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/chrome/installer/setup/setup_main.cc#1366)。该 Windows 安装器保护不能直接推广为所有平台或 update_client 都具有同位置的版本拒绝分支。
+
+cohort 状态有单独的读写链路：
+
+- [`PersistedData`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/persisted_data.h#103) 将 `cohort` 定义为机器可读的发布分组，`cohortname` 是其可读名称，`cohorthint` 表示客户端希望切换的分组；它们与 `release_channel`、当前版本是不同字段。
+- [`UpdateCheckSucceeded()`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/update_checker.cc#320) 对响应中实际出现的三个 cohort 字段按 app ID 写回 `PersistedData`；缺失字段保持原值，显式空值可清空。该步骤发生在更新检查成功解析后，不以实际安装成功为前提。
+- [`PersistedDataImpl`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/persisted_data.cc#136) 按小写 app ID 存储应用字典，三个值通过 `GetString`／`SetString` 读写到 PrefService。下一次检查由 [`MakeProtocolApp()` 调用](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/update_checker.cc#221) 取出并发送；[JSON 序列化](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/protocol_serializer_json.cc#143) 分别生成 `release_channel`、`cohort`、`cohortname`、`cohorthint`。
+
+`requestid`／`sessionid` 不应被改成固定“用户 ID”。[`MakeProtocolRequest()`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/protocol_serializer.cc#104) 为每次请求生成随机 V4 request ID；[`UpdateContext`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/update_engine.cc#75) 为一次更新会话生成随机 V4 session ID。该行为与 [3.1 协议对两者的定义](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/docs/updater/protocol_3_1.md#271) 一致。本仓库每次查询新建这两个 ID，并不是每次丢弃一个应长期固定的用户身份。
+
+本仓库最初每次发送 `version=0.0.0.0` 获取完整安装原包，未恢复或回传响应中的 cohort；仅保护 README 的最高版本不能补足这套连续状态。2026-10-28 已将按平台／架构／通道隔离的 `chrome-state.json` 接入自动流程，以成功发布的归档版本代表当前版本，并回传服务端 cohort；候选版本只在发布成功且对应附件可用后写回。`noupdate` 保留已发布版本，较旧响应不会使状态降级。字段、跨 Actions 的提交时机和失败重试见[仓库中的更新状态](development.md#仓库中的更新状态2026-10-28)。
+
+2026-10-28 对 Windows x64 Extended Stable 做了六次只读请求，结果如下；没有安装、下载或发布浏览器，也不记录 cohort 的具体值。
+
+| 请求中的 `app.version` | cohort 状态 | `sameversionupdate` | 本次响应 |
+|---|---|---|---|
+| `0.0.0.0` | 无 | `true` | `156.0.8078.48`，含 cohort／cohortname |
+| `156.0.8078.48` | 回传上次响应值 | `false` | `noupdate` |
+| `156.0.8078.48` | 回传上次响应值 | `true` | `156.0.8078.48` |
+| `0.0.0.0` | 回传上次响应值 | `true` | `156.0.8078.48` |
+| `156.0.8078.74` | 无 | `false` | `noupdate` |
+| `156.0.8078.74` | 无 | `true` | `noupdate` |
+
+这组样本支持当前版本请求与无状态完整安装查询行为不同，但没有触发版本交替，不能证明 cohort 能保证灰度稳定，也不能据此确认先前 `.74 → .48` 的服务端原因。接入 JSON 后另以真实 CLI 验证了已发布版本的 `noupdate` 路径，并核对非零版本请求仍可获得 Windows EXE／macOS ZIP 清单；未进行线上发布或执行 Chromium updater。
+
+验证与限制：本节通过固定 tag 源码逐项核对，没有编译或执行 Chromium updater。官方已有 [`UpdateCheckerTest`](https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/components/update_client/update_checker_unittest.cc#252) 将已保存的 cohort／hint／name 写入请求的断言；本次只阅读该测试，未运行。源码复核可从上述 Gitiles 链接追加 `?format=TEXT` 下载并 base64 解码，再检索 `GetCohort`、`SetCohort`、`GenerateRandomV4`、`component.version`；不能用一次实时响应证明 Google 服务端的长期灰度行为。
+
+可复核状态链路的源码命令（只读，需要 Python 3 标准库与网络）：
+
+```bash
+python3 - <<'PY'
+import base64, urllib.request
+root = 'https://chromium.googlesource.com/chromium/src/+/refs/tags/157.0.8089.0/'
+for path in ('chrome/updater/installer.cc', 'components/update_client/update_checker.cc',
+             'components/update_client/component.cc', 'chrome/installer/setup/setup_main.cc'):
+    with urllib.request.urlopen(root + path + '?format=TEXT', timeout=40) as response:
+        lines = base64.b64decode(response.read()).decode().splitlines()
+    for number, line in enumerate(lines, 1):
+        if any(term in line for term in ('component.version', 'GetCohort', 'SetCohort',
+                                         'SetProductVersion', 'IsDowngradeAllowed', 'HIGHER_VERSION_EXISTS')):
+            print(f'{path}:{number}: {line.strip()}')
+PY
+```
 
 ## Linux
 
@@ -128,9 +180,9 @@ Workflow 使用官方维护的大版本 tag，自动跟随该大版本内的兼�
 
 ## 当前可获取版本的 Release 描述更新
 
-各归档任务查询官方清单后，将该平台／架构本次实际获得的通道与版本写入根目录的 `chrome-平台-架构-discovery.json`，并在 `manifests` 中携带本次复用归档的精简来源及通道映射。即使浏览器归档已存在、跳过下载和压缩，也必须保留这份记录；`has_discovery=true` 控制上传临时 Actions artifact。查询记录与浏览器 manifest 文件均不作为 Release 附件。
+各归档任务查询官方清单后，将该平台／架构本轮选用的通道与版本写入根目录的 `chrome-平台-架构-discovery.json`，并在 `manifests` 中携带本次复用归档的精简来源及通道映射。传入状态文件时，`noupdate` 或低于已发布版本的响应选用已发布版本，并携带候选 `updater_state`；实际响应与选用版本的区别记录在 `updater_no_update` 日志中。即使浏览器归档已存在、跳过下载和压缩，也必须保留 discovery；`has_discovery=true` 控制上传临时 Actions artifact。查询记录与浏览器 manifest 文件均不作为 Release 附件。
 
-发布器先读取本次所有 discovery 记录，取各平台／架构／通道版本的并集，再合并本次新建归档的版本，只通过版本 tag 查询对应 Release。不会分页列举所有历史 Release，也不会把最大版本号当成唯一当前版本；Stable、Extended Stable 及各平台发布进度不同的版本都保留在这批集合内。复用归档阶段的结果，不在发布阶段重新选择一批当前版本。仅有本地归档 manifest 的输入仍按该批归档版本发布及刷新。
+发布器先读取本次所有 discovery 记录，取各平台／架构／通道选用版本的并集，再合并本次新建归档的版本，只通过版本 tag 查询对应 Release。不会分页列举所有历史 Release，也不会把所有目标中的最大版本号当成唯一当前版本；Stable、Extended Stable 及各平台发布进度不同的版本都保留在这批集合内。复用归档阶段的结果，不在发布阶段重新选择一批当前版本。仅有本地归档 manifest 的输入仍按该批归档版本发布及刷新。JSON 写回前另按其引用的已知 tag 检查公开状态和附件覆盖，不为额外历史版本刷新描述。
 
 只为集合中的版本使用当前 checkout 的 `release_text()` 模板重新生成标题和描述，没有新增浏览器附件时仍执行；已不在本次查询结果中的历史版本不改写。对应版本内已经归档的其他平台和通道、已记录的 EXE／ZIP／RPM 链接继续保留。旧版排版或手工追加说明由当前模板覆盖，相同结果省略重复 PATCH。说明刷新只修改 name／body，不修改 tag、附件、draft 或 prerelease 状态。无法恢复已有浏览器附件的来源时明确失败，避免静默丢失覆盖组合。
 

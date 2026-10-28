@@ -4,15 +4,15 @@
 
 ## 下载
 
-下表由 GitHub Actions 自动更新，列出各平台、架构、通道最近一次查询到的版本，点击版本号进入对应 Release 下载。各平台版本可能因 Google 发布进度或灰度而不同。
+下表由 GitHub Actions 自动更新，列出各平台、架构、通道已归档的最高版本，点击版本号进入对应 Release 下载。各平台版本可能因 Google 发布进度或灰度而不同；后续查询返回较旧版本时保留已有链接。
 
 <!-- releases:start -->
 | 平台 | 架构 | Stable | Extended Stable |
 |---|---|---|---|
 | Windows | X86 | [156.0.8078.74](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.74) | [156.0.8078.48](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.48) |
-| Windows | X64 | [156.0.8078.74](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.74) | [156.0.8078.48](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.48) |
+| Windows | X64 | [156.0.8078.74](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.74) | [156.0.8078.74](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.74) |
 | Windows | ARM64 | [156.0.8078.74](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.74) | [156.0.8078.48](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.48) |
-| macOS | X64 | [156.0.8078.49](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.49) | [156.0.8078.48](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.48) |
+| macOS | X64 | [156.0.8078.49](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.49) | [156.0.8078.74](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.74) |
 | macOS | ARM64 | [156.0.8078.73](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.73) | [156.0.8078.48](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.48) |
 | Linux | X64 | [156.0.8078.73](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.73) | 官方不提供 |
 | Linux | ARM64 | [156.0.8078.73](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.73) | 官方不提供 |

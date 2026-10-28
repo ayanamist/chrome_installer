@@ -2,6 +2,12 @@
 
 - [开发与运维手册](development.md)：维护者用的自动执行、Tag／Release／附件规则、阶段日志和本地运行命令；面向最终用户的说明在根目录 README。关键词：GitHub Actions、发布、discovery、本地归档、日志。
 
+- [README 版本回退防护](development.md#readme-版本回退防护2026-10-28)：2026-10-28 根据 Git 历史与回归测试确认下载表覆盖导致回退，按平台／架构／通道保留已归档的最高版本；记录证据、数值比较和验证边界。关键词：灰度、版本回退、最高版本、README、discovery。
+
+- [仓库中的更新状态](development.md#仓库中的更新状态2026-10-28)：2026-10-28 接入 `chrome-state.json`，持久化每个目标的已发布版本和 cohort，成功发布后与 README 一起自动提交；记录失败重试、迁移证据与验证命令。关键词：JSON、状态持久化、cohort、noupdate、GitHub Actions、版本回退。
+
+- [Updater 的版本与 cohort 状态](protocol.md#updater-的版本与-cohort-状态2026-10-28)：2026-10-28 核对 Chromium 固定版本的当前安装版本、默认禁止回退、cohort 持久化与随机请求 ID，记录本仓库无状态查询的差异及适配边界。关键词：updater、Omaha、cohort、version、rollback_allowed、noupdate、sessionid。
+
 - [Stable 与 Extended Stable 的内容重合](protocol.md#stable-与-extended-stable-的内容重合2026-10-25)：2026-10-25 核对 Windows 156.0.8078.48 重复来源与附件 digest，记录通道发现、原包／归档哈希去重、无通道附件名、隐藏来源映射及历史兼容合同。关键词：Stable、Extended Stable、去重、SHA-256、release_channel、browser_asset、metadata-v1。
 
 - [协议及归档约定](protocol.md)：三平台、Windows x86／x64／ARM64 及 macOS／Linux x64／ARM64 官方 payload 的下载、校验、7z／tar.xz 封装和版本 Release 合并及当前可获取版本的描述刷新规则。关键词：Omaha、release_channel、原生下载、uncompressed EXE、updater ZIP、旧 CRX3 来源兼容、DEB、RPM、Stable、Extended Stable、SHA256、7-Zip、GitHub Actions。范围及日期见正文；实现基于 Chromium 157.0.8089.0 协议，使用实时官方响应确定版本。

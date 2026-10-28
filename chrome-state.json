@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "linux/arm64/stable": {
+      "version": "156.0.8078.73"
+    },
+    "linux/x64/stable": {
+      "version": "156.0.8078.73"
+    },
+    "macos/arm64/extended": {
+      "version": "156.0.8078.48"
+    },
+    "macos/arm64/stable": {
+      "version": "156.0.8078.73"
+    },
+    "macos/x64/extended": {
+      "version": "156.0.8078.74"
+    },
+    "macos/x64/stable": {
+      "version": "156.0.8078.49"
+    },
+    "windows/arm64/extended": {
+      "version": "156.0.8078.48"
+    },
+    "windows/arm64/stable": {
+      "version": "156.0.8078.74"
+    },
+    "windows/x64/extended": {
+      "version": "156.0.8078.74"
+    },
+    "windows/x64/stable": {
+      "version": "156.0.8078.74"
+    },
+    "windows/x86/extended": {
+      "version": "156.0.8078.48"
+    },
+    "windows/x86/stable": {
+      "version": "156.0.8078.74"
+    }
+  }
+}

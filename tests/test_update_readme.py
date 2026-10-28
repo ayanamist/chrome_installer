@@ -5,6 +5,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import update_readme as readme
@@ -71,6 +72,63 @@ class UpdateReadmeTests(unittest.TestCase):
     def test_missing_markers_are_rejected(self):
         with self.assertRaises(ValueError):
             readme.update_readme('no markers', 'table')
+
+    def test_rollout_does_not_downgrade_existing_channel(self):
+        # Replay the Windows x64 Extended Stable regression in 8772f11 -> 5ceabdb.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'README.md'
+            table = readme.release_table('o/r', {
+                ('windows', 'x64'): {'extended': '156.0.8078.74'},
+            })
+            original = f'{readme.START}\n{table}\n{readme.END}\n'
+            path.write_text(original, encoding='utf-8')
+            self.discovery(root, 'windows', 'x64', {'extended': '156.0.8078.48'})
+            with patch.object(sys, 'argv', ['update_readme.py', '--input', str(root),
+                                          '--readme', str(path), '--repository', 'o/r']):
+                readme.main()
+            self.assertEqual(path.read_text(encoding='utf-8'), original)
+
+    def test_successive_offers_use_numeric_versions_without_going_backwards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'README.md'
+            path.write_text(f'{readme.START}\n{readme.END}\n', encoding='utf-8')
+            argv = ['update_readme.py', '--input', str(root), '--readme', str(path), '--repository', 'o/r']
+            for offered, expected in [
+                ('156.0.8078.9', '156.0.8078.9'),
+                ('156.0.8078.10', '156.0.8078.10'),
+                ('156.0.8078.9', '156.0.8078.10'),
+                ('156.0.8078.100', '156.0.8078.100'),
+                ('156.0.8078.99', '156.0.8078.100'),
+                ('157.0.1.1', '157.0.1.1'),
+                ('156.0.8078.100', '157.0.1.1'),
+                ('157.0.1.1', '157.0.1.1'),
+            ]:
+                with self.subTest(offered=offered):
+                    self.discovery(root, 'windows', 'x64', {'stable': offered})
+                    with patch.object(sys, 'argv', argv):
+                        readme.main()
+                    self.assertEqual(readme.parse_table(path.read_text(encoding='utf-8'), 'o/r'),
+                                     {('windows', 'x64'): {'stable': expected}})
+
+    def test_channels_and_targets_advance_independently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'README.md'
+            previous = {('windows', 'x64'): {'stable': '156.0.8078.74', 'extended': '152.0.1.2'},
+                        ('macos', 'x64'): {'extended': '156.0.8078.74'}}
+            table = readme.release_table('o/r', previous)
+            path.write_text(f'{readme.START}\n{table}\n{readme.END}\n', encoding='utf-8')
+            self.discovery(root, 'windows', 'x64', {'stable': '156.0.8078.75'})
+            self.discovery(root, 'macos', 'x64', {'stable': '156.0.8078.49', 'extended': '156.0.8078.48'})
+            with patch.object(sys, 'argv', ['update_readme.py', '--input', str(root),
+                                          '--readme', str(path), '--repository', 'o/r']):
+                readme.main()
+            self.assertEqual(readme.parse_table(path.read_text(encoding='utf-8'), 'o/r'), {
+                ('windows', 'x64'): {'stable': '156.0.8078.75', 'extended': '152.0.1.2'},
+                ('macos', 'x64'): {'stable': '156.0.8078.49', 'extended': '156.0.8078.74'},
+            })
 
 
 if __name__ == '__main__':

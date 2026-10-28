@@ -11,11 +11,13 @@ on:
       - '.github/workflows/archive.yml'
       - 'scripts/**'
       - 'tests/**'
+      - 'chrome-state.json'
   pull_request:
     paths:
       - '.github/workflows/archive.yml'
       - 'scripts/**'
       - 'tests/**'
+      - 'chrome-state.json'
 
 permissions:
   contents: read
@@ -42,6 +44,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Queued runs must read the latest committed update state.
+          ref: ${{ github.ref }}
           persist-credentials: false
       - uses: actions/setup-python@v7
         with:
@@ -61,6 +65,7 @@ jobs:
           python scripts/chrome_archive.py
           --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
           --seven-zip "${{ steps.sevenzip.outputs.command }}" --output dist
+          --state chrome-state.json
       - uses: actions/upload-artifact@v7
         if: steps.archive.outputs.has_discovery == 'true'
         with:
@@ -80,6 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.ref }}
           # The token is reused to push the README update below.
           persist-credentials: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-python@v7
@@ -93,19 +99,19 @@ jobs:
       - name: Publish archives and refresh currently offered versions
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/publish_releases.py --input dist
-      - name: Update README release links
+        run: python scripts/publish_releases.py --input dist --state chrome-state.json
+      - name: Update README release links and persist update state
         if: github.ref == 'refs/heads/main'
         run: |
-          python scripts/update_readme.py --input dist
-          if git diff --quiet -- README.md; then
-            echo 'README release links are up to date.'
+          python scripts/update_readme.py --input dist --state chrome-state.json
+          if git diff --quiet -- README.md chrome-state.json; then
+            echo 'README release links and update state are up to date.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add README.md
-          git commit -m 'Update README release links [skip ci]'
+          git add README.md chrome-state.json
+          git commit -m 'Update Chrome versions and updater state [skip ci]'
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
