@@ -14,7 +14,7 @@
     },
     "macos/arm64/stable": {
       "version": "156.0.8078.80",
-      "cohort": "1:1y5:3xol@0.2,3xa3@0.01",
+      "cohort": "1:1y5:3xtf@0.01,3xol@0.2,3xa3@0.01",
       "cohortname": "Stable"
     },
     "macos/x64/extended": {
@@ -24,7 +24,7 @@
     },
     "macos/x64/stable": {
       "version": "156.0.8078.80",
-      "cohort": "1:1y5:3xol@0.2,3xa3@0.01",
+      "cohort": "1:1y5:3xtf@0.01,3xol@0.2,3xa3@0.01",
       "cohortname": "Stable"
     },
     "windows/arm64/extended": {
