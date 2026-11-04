@@ -2,58 +2,58 @@
   "schema_version": 1,
   "targets": {
     "linux/arm64/stable": {
-      "version": "156.0.8078.79"
+      "version": "157.0.8103.38"
     },
     "linux/x64/stable": {
-      "version": "156.0.8078.79"
+      "version": "157.0.8103.38"
     },
     "macos/arm64/extended": {
-      "version": "156.0.8078.80",
-      "cohort": "1:z69:",
-      "cohortname": "Extended Stable"
+      "version": "156.0.8078.88",
+      "cohort": "1:z69/3xnx:",
+      "cohortname": "M156 Rollout"
     },
     "macos/arm64/stable": {
       "version": "156.0.8078.80",
-      "cohort": "1:1y5:3xa3@0.01",
+      "cohort": "1:1y5:3xol@0.2,3xa3@0.01",
       "cohortname": "Stable"
     },
     "macos/x64/extended": {
       "version": "156.0.8078.80",
-      "cohort": "1:z69:",
+      "cohort": "1:z69:3xnx@0.25",
       "cohortname": "Extended Stable"
     },
     "macos/x64/stable": {
       "version": "156.0.8078.80",
-      "cohort": "1:1y5:3xa3@0.01",
+      "cohort": "1:1y5:3xol@0.2,3xa3@0.01",
       "cohortname": "Stable"
     },
     "windows/arm64/extended": {
       "version": "156.0.8078.80",
-      "cohort": "1:z63:",
+      "cohort": "1:z63:3xnr@0.25",
       "cohortname": "Extended Stable"
     },
     "windows/arm64/stable": {
-      "version": "156.0.8078.80",
+      "version": "157.0.8103.39",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x64/extended": {
-      "version": "156.0.8078.80",
-      "cohort": "1:z63:",
-      "cohortname": "Extended Stable"
+      "version": "156.0.8078.88",
+      "cohort": "1:z63/3xnr:",
+      "cohortname": "M156 Rollout"
     },
     "windows/x64/stable": {
-      "version": "156.0.8078.80",
+      "version": "157.0.8103.39",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x86/extended": {
       "version": "156.0.8078.80",
-      "cohort": "1:z63:",
+      "cohort": "1:z63:3xnr@0.25",
       "cohortname": "Extended Stable"
     },
     "windows/x86/stable": {
-      "version": "156.0.8078.80",
+      "version": "157.0.8103.39",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     }

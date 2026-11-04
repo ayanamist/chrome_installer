@@ -9,13 +9,13 @@
 <!-- releases:start -->
 | 平台 | 架构 | Stable | Extended Stable |
 |---|---|---|---|
-| Windows | X86 | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
-| Windows | X64 | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
-| Windows | ARM64 | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
+| Windows | X86 | [157.0.8103.39](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.39) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
+| Windows | X64 | [157.0.8103.39](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.39) | [156.0.8078.88](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.88) |
+| Windows | ARM64 | [157.0.8103.39](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.39) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
 | macOS | X64 | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
-| macOS | ARM64 | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) |
-| Linux | X64 | [156.0.8078.79](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.79) | 官方不提供 |
-| Linux | ARM64 | [156.0.8078.79](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.79) | 官方不提供 |
+| macOS | ARM64 | [156.0.8078.80](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.80) | [156.0.8078.88](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.88) |
+| Linux | X64 | [157.0.8103.38](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.38) | 官方不提供 |
+| Linux | ARM64 | [157.0.8103.38](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.38) | 官方不提供 |
 <!-- releases:end -->
 
 ## 更新与校验
