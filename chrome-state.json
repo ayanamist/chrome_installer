@@ -14,7 +14,7 @@
     },
     "macos/arm64/stable": {
       "version": "157.0.8103.51",
-      "cohort": "1:1y5:3xtf@0.01,3yh9@0.5",
+      "cohort": "1:1y5:3xtf@0.01,3ylf@0.01,3yh9@0.5",
       "cohortname": "Stable"
     },
     "macos/x64/extended": {
@@ -24,7 +24,7 @@
     },
     "macos/x64/stable": {
       "version": "157.0.8103.78",
-      "cohort": "1:1y5/3yh9:3xtf@0.01,3yhl@0.5",
+      "cohort": "1:1y5/3yh9:3yhl@0.5",
       "cohortname": "157.0.8103.78 Rollout"
     },
     "windows/arm64/extended": {
