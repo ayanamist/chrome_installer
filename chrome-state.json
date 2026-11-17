@@ -2,58 +2,58 @@
   "schema_version": 1,
   "targets": {
     "linux/arm64/stable": {
-      "version": "157.0.8103.78"
+      "version": "158.0.8127.36"
     },
     "linux/x64/stable": {
-      "version": "157.0.8103.78"
+      "version": "158.0.8127.36"
     },
     "macos/arm64/extended": {
       "version": "156.0.8078.100",
-      "cohort": "1:z69/3ygl:",
-      "cohortname": "M156 Rollout"
+      "cohort": "1:z69:3yyx@0.25",
+      "cohortname": "Extended Stable"
     },
     "macos/arm64/stable": {
-      "version": "157.0.8103.51",
-      "cohort": "1:1y5:3xtf@0.01,3ylf@0.01,3yh9@0.5",
+      "version": "157.0.8103.79",
+      "cohort": "1:1y5:3xtf@0.01,3ylf@0.2",
       "cohortname": "Stable"
     },
     "macos/x64/extended": {
-      "version": "156.0.8078.96",
-      "cohort": "1:z69:3ygl@0.25",
+      "version": "156.0.8078.100",
+      "cohort": "1:z69:3yyx@0.25",
       "cohortname": "Extended Stable"
     },
     "macos/x64/stable": {
-      "version": "157.0.8103.78",
-      "cohort": "1:1y5/3yh9:3yhl@0.5",
-      "cohortname": "157.0.8103.78 Rollout"
+      "version": "157.0.8103.79",
+      "cohort": "1:1y5:3xtf@0.0,3ylf@0.2",
+      "cohortname": "Stable"
     },
     "windows/arm64/extended": {
       "version": "156.0.8078.100",
-      "cohort": "1:z63/3ygf:",
-      "cohortname": "M156 Rollout"
+      "cohort": "1:z63:3yyr@0.25",
+      "cohortname": "Extended Stable"
     },
     "windows/arm64/stable": {
-      "version": "157.0.8103.79",
+      "version": "158.0.8127.37",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x64/extended": {
-      "version": "156.0.8078.96",
-      "cohort": "1:z63:3ygf@0.25",
+      "version": "156.0.8078.100",
+      "cohort": "1:z63:3yyr@0.25",
       "cohortname": "Extended Stable"
     },
     "windows/x64/stable": {
-      "version": "157.0.8103.79",
+      "version": "158.0.8127.37",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x86/extended": {
-      "version": "156.0.8078.96",
-      "cohort": "1:z63:3ygf@0.25",
-      "cohortname": "Extended Stable"
+      "version": "156.0.8078.108",
+      "cohort": "1:z63/3yyr:",
+      "cohortname": "M156 Rollout"
     },
     "windows/x86/stable": {
-      "version": "157.0.8103.79",
+      "version": "158.0.8127.37",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     }
