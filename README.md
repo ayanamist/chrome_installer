@@ -10,10 +10,10 @@
 | 平台 | 架构 | Stable | Extended Stable |
 |---|---|---|---|
 | Windows | X86 | [158.0.8127.37](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.37) | [156.0.8078.108](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.108) |
-| Windows | X64 | [158.0.8127.37](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.37) | [156.0.8078.100](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.100) |
-| Windows | ARM64 | [158.0.8127.37](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.37) | [156.0.8078.100](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.100) |
-| macOS | X64 | [157.0.8103.79](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.79) | [156.0.8078.100](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.100) |
-| macOS | ARM64 | [157.0.8103.79](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.79) | [156.0.8078.100](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.100) |
+| Windows | X64 | [158.0.8127.37](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.37) | [156.0.8078.108](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.108) |
+| Windows | ARM64 | [158.0.8127.37](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.37) | [156.0.8078.108](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.108) |
+| macOS | X64 | [157.0.8103.80](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.80) | [156.0.8078.109](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.109) |
+| macOS | ARM64 | [157.0.8103.79](https://github.com/ayanamist/chrome_installer/releases/tag/157.0.8103.79) | [156.0.8078.109](https://github.com/ayanamist/chrome_installer/releases/tag/156.0.8078.109) |
 | Linux | X64 | [158.0.8127.36](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.36) | 官方不提供 |
 | Linux | ARM64 | [158.0.8127.36](https://github.com/ayanamist/chrome_installer/releases/tag/158.0.8127.36) | 官方不提供 |
 <!-- releases:end -->
