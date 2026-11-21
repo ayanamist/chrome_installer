@@ -24,7 +24,7 @@
     },
     "macos/x64/stable": {
       "version": "157.0.8103.80",
-      "cohort": "1:1y5/3ylf/3ylx:3xtf@0.0,3z33@0.01",
+      "cohort": "1:1y5/3ylf/3ylx:",
       "cohortname": "Control"
     },
     "windows/arm64/extended": {
