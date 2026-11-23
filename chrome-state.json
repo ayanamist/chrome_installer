@@ -2,58 +2,58 @@
   "schema_version": 1,
   "targets": {
     "linux/arm64/stable": {
-      "version": "158.0.8127.36"
+      "version": "158.0.8127.88"
     },
     "linux/x64/stable": {
-      "version": "158.0.8127.36"
+      "version": "158.0.8127.88"
     },
     "macos/arm64/extended": {
       "version": "156.0.8078.109",
-      "cohort": "1:z69:",
+      "cohort": "1:z69:3ze9@0.25",
       "cohortname": "Extended Stable"
     },
     "macos/arm64/stable": {
-      "version": "157.0.8103.79",
-      "cohort": "1:1y5:3xtf@0.01,3ylf@0.5,3z33@0.01",
-      "cohortname": "Stable"
+      "version": "158.0.8127.38",
+      "cohort": "1:1y5/3zex/3zf9:3z33@0.01",
+      "cohortname": "Control"
     },
     "macos/x64/extended": {
       "version": "156.0.8078.109",
-      "cohort": "1:z69:",
+      "cohort": "1:z69:3ze9@0.25",
       "cohortname": "Extended Stable"
     },
     "macos/x64/stable": {
-      "version": "157.0.8103.80",
-      "cohort": "1:1y5/3ylf/3ylx:",
-      "cohortname": "Control"
+      "version": "158.0.8127.37",
+      "cohort": "1:1y5:3zex@0.5,3z33@0.01",
+      "cohortname": "Stable"
     },
     "windows/arm64/extended": {
       "version": "156.0.8078.108",
-      "cohort": "1:z63:",
+      "cohort": "1:z63:3ze3@0.25",
       "cohortname": "Extended Stable"
     },
     "windows/arm64/stable": {
-      "version": "158.0.8127.37",
+      "version": "158.0.8127.89",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x64/extended": {
-      "version": "156.0.8078.108",
-      "cohort": "1:z63:",
-      "cohortname": "Extended Stable"
+      "version": "156.0.8078.114",
+      "cohort": "1:z63/3ze3:",
+      "cohortname": "M156 Rollout"
     },
     "windows/x64/stable": {
-      "version": "158.0.8127.37",
+      "version": "158.0.8127.89",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     },
     "windows/x86/extended": {
       "version": "156.0.8078.108",
-      "cohort": "1:z63:",
+      "cohort": "1:z63:3ze3@0.25",
       "cohortname": "Extended Stable"
     },
     "windows/x86/stable": {
-      "version": "158.0.8127.37",
+      "version": "158.0.8127.89",
       "cohort": "1:gu/i19:",
       "cohortname": "Stable Installs & Version Pins"
     }
