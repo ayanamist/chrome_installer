@@ -14,7 +14,7 @@
     },
     "macos/arm64/stable": {
       "version": "158.0.8127.38",
-      "cohort": "1:1y5/3zex/3zf9:3z33@0.01",
+      "cohort": "1:1y5/3zex/3zf9:",
       "cohortname": "Control"
     },
     "macos/x64/extended": {
@@ -24,7 +24,7 @@
     },
     "macos/x64/stable": {
       "version": "158.0.8127.37",
-      "cohort": "1:1y5:3zex@0.5,3z33@0.01",
+      "cohort": "1:1y5:3zex@0.5,3z33@0.01,3zj3@0.01",
       "cohortname": "Stable"
     },
     "windows/arm64/extended": {
